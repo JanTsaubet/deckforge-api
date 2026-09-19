@@ -53,6 +53,19 @@ export class DecksController {
     return this.decks.create(user.id, dto);
   }
 
+  /** Copia un mazo propio, o uno público de otra persona, a tu biblioteca. */
+  @Post(':id/duplicate')
+  @UseGuards(AuthGuard)
+  @ApiCookieAuth()
+  @ApiCreatedResponse({ type: DeckDto, description: 'La copia, que empieza siempre privada' })
+  @ApiNotFoundResponse({ description: 'No existe o no lo puedes ver' })
+  duplicate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: SessionUser,
+  ): Promise<DeckDto> {
+    return this.decks.duplicate(id, user.id);
+  }
+
   /** Accesible sin sesión: los mazos públicos y los ocultos con enlace se pueden compartir. */
   @Get(':id')
   @UseGuards(OptionalAuthGuard)

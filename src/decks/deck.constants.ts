@@ -22,6 +22,9 @@ export type DeckFormat = (typeof DECK_FORMATS)[number];
 export type DeckVisibility = (typeof DECK_VISIBILITIES)[number];
 export type DeckBoard = (typeof DECK_BOARDS)[number];
 
+/** Longitud máxima del nombre de un mazo. */
+export const MAX_DECK_NAME_LENGTH = 100;
+
 /** DeckForge está pensado para Commander: es el formato por defecto. */
 export const DEFAULT_DECK_FORMAT: DeckFormat = 'commander';
 

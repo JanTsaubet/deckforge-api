@@ -6,6 +6,7 @@ import {
   DECK_VISIBILITIES,
   DEFAULT_DECK_FORMAT,
   DEFAULT_DECK_VISIBILITY,
+  MAX_DECK_NAME_LENGTH,
   type DeckFormat,
   type DeckVisibility,
 } from '../deck.constants.js';
@@ -18,10 +19,10 @@ const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? val
  * Los valores por defecto se aplican en el servicio.
  */
 export class CreateDeckDto {
-  @ApiProperty({ example: 'Atraxa, superamigos', minLength: 1, maxLength: 100 })
+  @ApiProperty({ example: 'Atraxa, superamigos', minLength: 1, maxLength: MAX_DECK_NAME_LENGTH })
   @Transform(trim)
   @IsString()
-  @Length(1, 100)
+  @Length(1, MAX_DECK_NAME_LENGTH)
   name!: string;
 
   @ApiPropertyOptional({ maxLength: 2000 })

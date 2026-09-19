@@ -115,4 +115,37 @@ export class DecksRepository {
   async delete(id: string): Promise<void> {
     await this.db.delete(decks).where(eq(decks.id, id));
   }
+
+  /**
+   * Copia un mazo, con sus cartas, para `ownerId`. Va en una transacción: o se copia todo
+   * o nada. La copia empieza siempre privada, aunque el original fuese público.
+   */
+  async duplicate(sourceId: string, ownerId: string, name: string): Promise<string> {
+    return this.db.transaction(async (tx) => {
+      const [source] = await tx
+        .select({ description: decks.description, format: decks.format })
+        .from(decks)
+        .where(eq(decks.id, sourceId));
+
+      const [copy] = await tx
+        .insert(decks)
+        .values({
+          ownerId,
+          name,
+          description: source.description,
+          format: source.format,
+          visibility: 'private',
+        })
+        .returning({ id: decks.id });
+
+      const entries = await tx.select().from(deckEntries).where(eq(deckEntries.deckId, sourceId));
+      if (entries.length > 0) {
+        await tx
+          .insert(deckEntries)
+          .values(entries.map((entry) => ({ ...entry, deckId: copy.id })));
+      }
+
+      return copy.id;
+    });
+  }
 }

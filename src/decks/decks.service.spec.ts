@@ -27,6 +27,7 @@ describe('DecksService', () => {
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
+    duplicate: ReturnType<typeof vi.fn>;
   };
   let service: DecksService;
 
@@ -39,6 +40,7 @@ describe('DecksService', () => {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      duplicate: vi.fn(),
     };
     service = new DecksService(repository as unknown as DecksRepository);
   });
@@ -87,6 +89,40 @@ describe('DecksService', () => {
     await service.remove('mazo-1', 'duena');
 
     expect(repository.delete).toHaveBeenCalledWith('mazo-1');
+  });
+
+  it('copiar un mazo público ajeno crea una copia a tu nombre', async () => {
+    repository.findById
+      .mockResolvedValueOnce(deckRow({ visibility: 'public', name: 'Atraxa' }))
+      .mockResolvedValueOnce(
+        deckRow({ id: 'copia-1', ownerId: 'otra-persona', name: 'Copia de Atraxa' }),
+      );
+    repository.duplicate.mockResolvedValue('copia-1');
+
+    const copy = await service.duplicate('mazo-1', 'otra-persona');
+
+    expect(repository.duplicate).toHaveBeenCalledWith('mazo-1', 'otra-persona', 'Copia de Atraxa');
+    expect(copy.id).toBe('copia-1');
+  });
+
+  it('no deja copiar un mazo privado ajeno', async () => {
+    repository.findById.mockResolvedValue(deckRow({ visibility: 'private', ownerId: 'duena' }));
+
+    await expect(service.duplicate('mazo-1', 'otra-persona')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(repository.duplicate).not.toHaveBeenCalled();
+  });
+
+  it('el nombre de la copia nunca pasa del máximo permitido', async () => {
+    repository.findById.mockResolvedValue(deckRow({ visibility: 'public', name: 'x'.repeat(100) }));
+    repository.duplicate.mockResolvedValue('copia-1');
+
+    await service.duplicate('mazo-1', 'duena');
+
+    const [, , name] = repository.duplicate.mock.calls[0] as [string, string, string];
+    expect(name).toHaveLength(100);
+    expect(name.startsWith('Copia de ')).toBe(true);
   });
 
   it('devuelve las fechas en ISO 8601', async () => {

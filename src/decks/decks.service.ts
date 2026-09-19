@@ -1,5 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { DEFAULT_DECK_FORMAT, DEFAULT_DECK_VISIBILITY } from './deck.constants.js';
+import {
+  DEFAULT_DECK_FORMAT,
+  DEFAULT_DECK_VISIBILITY,
+  MAX_DECK_NAME_LENGTH,
+} from './deck.constants.js';
 import { DecksRepository, type DeckEntryRow, type DeckRow } from './decks.repository.js';
 import type { CreateDeckDto } from './dto/create-deck.dto.js';
 import type { DeckDto, DeckSummaryDto } from './dto/deck.dto.js';
@@ -55,10 +59,27 @@ export class DecksService {
     await this.repository.delete(id);
   }
 
+  /**
+   * Copia un mazo a la biblioteca de `viewerId`: sirve para duplicar uno propio y para
+   * guardarse uno público de otra persona. Lo que no se puede ver, no se puede copiar.
+   */
+  async duplicate(id: string, viewerId: string): Promise<DeckDto> {
+    const source = await this.repository.findById(id);
+    if (!source || !canView(source, viewerId)) throw deckNotFound();
+
+    const copyId = await this.repository.duplicate(id, viewerId, copyName(source.name));
+    return this.getById(copyId, viewerId);
+  }
+
   private async assertOwner(id: string, ownerId: string): Promise<void> {
     const deckOwnerId = await this.repository.findOwnerId(id);
     if (deckOwnerId !== ownerId) throw deckNotFound();
   }
+}
+
+/** "Copia de …", recortado para no pasar del máximo que admite un nombre. */
+function copyName(name: string): string {
+  return `Copia de ${name}`.slice(0, MAX_DECK_NAME_LENGTH);
 }
 
 function canView(deck: DeckRow, viewerId: string | undefined): boolean {

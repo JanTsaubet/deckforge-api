@@ -1,5 +1,7 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
+import { DATABASE, type Database } from '../src/database/database.js';
+import { deckEntries } from '../src/database/schema/index.js';
 import { createTestApp, signUp, type TestUser } from './helpers/test-app.js';
 
 interface DeckResponse {
@@ -113,6 +115,50 @@ describe('Mazos (e2e)', () => {
 
     await api().delete(`/v1/decks/${deck.id}`).set('Cookie', owner.cookie).expect(204);
     await api().get(`/v1/decks/${deck.id}`).set('Cookie', owner.cookie).expect(404);
+  });
+
+  it('duplica un mazo propio con todas sus cartas; la copia empieza privada', async () => {
+    const deck = await createDeck(owner, { name: 'Con cartas', visibility: 'public' });
+    // Aún no hay endpoint para añadir cartas (llega con la importación): se insertan directamente.
+    await app
+      .get<Database>(DATABASE)
+      .insert(deckEntries)
+      .values([
+        { deckId: deck.id, cardId: 'sol-ring', quantity: 1 },
+        { deckId: deck.id, cardId: 'island', quantity: 30 },
+      ]);
+
+    const response = await api()
+      .post(`/v1/decks/${deck.id}/duplicate`)
+      .set('Cookie', owner.cookie)
+      .expect(201);
+
+    expect(response.body).toMatchObject({
+      name: 'Copia de Con cartas',
+      visibility: 'private',
+      cardCount: 31,
+      ownerUsername: owner.username,
+    });
+    expect(response.body.id).not.toBe(deck.id);
+  });
+
+  it('copia a tu biblioteca un mazo público de otra persona', async () => {
+    const deck = await createDeck(owner, { name: 'Lista pública', visibility: 'public' });
+
+    const response = await api()
+      .post(`/v1/decks/${deck.id}/duplicate`)
+      .set('Cookie', stranger.cookie)
+      .expect(201);
+
+    expect(response.body.ownerUsername).toBe(stranger.username);
+    const library = await api().get('/v1/decks').set('Cookie', stranger.cookie).expect(200);
+    expect((library.body as DeckResponse[]).map((d) => d.name)).toContain('Copia de Lista pública');
+  });
+
+  it('no se puede copiar un mazo privado ajeno', async () => {
+    const deck = await createDeck(owner, { name: 'Solo mío' });
+
+    await api().post(`/v1/decks/${deck.id}/duplicate`).set('Cookie', stranger.cookie).expect(404);
   });
 
   it('rechaza datos inválidos con 400 en lugar de guardarlos o romper', async () => {

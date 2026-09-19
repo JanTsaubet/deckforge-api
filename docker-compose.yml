@@ -1,0 +1,25 @@
+# Postgres para desarrollo local.
+#   Arrancar:  docker compose up -d
+#   Parar:     docker compose down        (los datos se conservan en el volumen)
+#   Borrarlo:  docker compose down -v     (elimina también los datos)
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: deckforge-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: deckforge
+      POSTGRES_PASSWORD: deckforge
+      POSTGRES_DB: deckforge
+    ports:
+      - '5432:5432'
+    volumes:
+      - deckforge-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U deckforge -d deckforge']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  deckforge-db:

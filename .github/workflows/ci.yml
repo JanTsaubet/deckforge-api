@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Si se empuja varias veces seguidas, solo interesa la última ejecución.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, tipos, tests y build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Formato
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Tests unitarios
+        run: npm test
+
+      # La API completa contra un Postgres en memoria (PGlite) con las migraciones reales:
+      # no hace falta levantar ningún servicio de base de datos.
+      - name: Tests e2e
+        run: npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+      # Si alguien cambia el esquema y olvida generar la migración, aquí se nota.
+      - name: Las migraciones están al día con el esquema
+        run: |
+          npx drizzle-kit generate
+          if [ -n "$(git status --porcelain drizzle)" ]; then
+            echo "::error::El esquema ha cambiado pero falta su migración. Ejecuta 'npm run db:generate' y súbela."
+            git status --porcelain drizzle
+            exit 1
+          fi

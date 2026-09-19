@@ -23,6 +23,20 @@ describe('loadEnv', () => {
   });
 });
 
+describe('proveedores OAuth', () => {
+  it('son opcionales, y un valor vacío cuenta como no definido', () => {
+    const env = loadEnv({ ...validEnv, GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '' });
+
+    expect(env.GOOGLE_CLIENT_ID).toBeUndefined();
+  });
+
+  it('exigen id y secreto a la vez', () => {
+    expect(() => loadEnv({ ...validEnv, DISCORD_CLIENT_ID: 'solo-el-id' })).toThrow(
+      /DISCORD_CLIENT_SECRET/,
+    );
+  });
+});
+
 describe('loadWorkerEnv', () => {
   it('no exige los secretos de la API: al worker solo le hace falta la base de datos', () => {
     const env = loadWorkerEnv({ DATABASE_URL: validEnv.DATABASE_URL });

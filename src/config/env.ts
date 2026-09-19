@@ -1,4 +1,4 @@
-import { z, type ZodObject, type ZodRawShape } from 'zod';
+import { z } from 'zod';
 
 /** Token de inyección de la configuración validada. */
 export const ENV = Symbol('ENV');
@@ -8,13 +8,40 @@ const databaseEnvSchema = z.object({
   DATABASE_URL: z.string().min(1),
 });
 
-/** La API HTTP. */
-const envSchema = databaseEnvSchema.extend({
-  PORT: z.coerce.number().int().positive().default(4000),
-  BETTER_AUTH_SECRET: z.string().min(32, 'debe tener al menos 32 caracteres'),
-  BETTER_AUTH_URL: z.url(),
-  WEB_ORIGIN: z.url(),
-});
+/** Un texto opcional: vacío cuenta como no definido (así funciona `GOOGLE_CLIENT_ID=` en .env). */
+const optionalText = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.string().optional(),
+);
+
+/**
+ * La API HTTP. Los proveedores OAuth son opcionales: cada uno se activa solo si tiene su id
+ * y su secreto. Con uno de los dos sin el otro, la API no arranca (es casi seguro un error).
+ */
+const envSchema = databaseEnvSchema
+  .extend({
+    PORT: z.coerce.number().int().positive().default(4000),
+    BETTER_AUTH_SECRET: z.string().min(32, 'debe tener al menos 32 caracteres'),
+    BETTER_AUTH_URL: z.url(),
+    WEB_ORIGIN: z.url(),
+    GOOGLE_CLIENT_ID: optionalText,
+    GOOGLE_CLIENT_SECRET: optionalText,
+    DISCORD_CLIENT_ID: optionalText,
+    DISCORD_CLIENT_SECRET: optionalText,
+  })
+  .superRefine((env, ctx) => {
+    for (const provider of ['GOOGLE', 'DISCORD'] as const) {
+      const id = env[`${provider}_CLIENT_ID`];
+      const secret = env[`${provider}_CLIENT_SECRET`];
+      if (Boolean(id) !== Boolean(secret)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [id ? `${provider}_CLIENT_SECRET` : `${provider}_CLIENT_ID`],
+          message: `falta: ${provider} necesita id y secreto, o ninguno de los dos`,
+        });
+      }
+    }
+  });
 
 /**
  * El worker. No recibe los secretos de la API: cada proceso tiene solo lo que usa.
@@ -44,10 +71,10 @@ export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env): WorkerEn
   return parseEnv(workerEnvSchema, source);
 }
 
-function parseEnv<Shape extends ZodRawShape>(
-  schema: ZodObject<Shape>,
+function parseEnv<Schema extends z.ZodType>(
+  schema: Schema,
   source: NodeJS.ProcessEnv,
-): z.infer<ZodObject<Shape>> {
+): z.infer<Schema> {
   const result = schema.safeParse(source);
 
   if (!result.success) {

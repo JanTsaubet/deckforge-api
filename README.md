@@ -6,17 +6,17 @@ El frontend vive en el repositorio **deckforge-web**, que contiene también la v
 
 ## Stack
 
-| Pieza              | Tecnología                                                            |
-| ------------------ | --------------------------------------------------------------------- |
-| Framework          | NestJS 12 (módulos ES)                                                |
-| Base de datos      | PostgreSQL 17 (Docker en desarrollo)                                  |
-| ORM y migraciones  | Drizzle ORM + drizzle-kit                                             |
-| Autenticación      | Better Auth: email y contraseña, con el plugin de nombre de usuario   |
-| Validación         | class-validator en las peticiones · Zod en las variables de entorno   |
-| Documentación      | OpenAPI con `@nestjs/swagger`: `/docs` (navegable) y `/openapi.json`  |
-| Tareas programadas | `@nestjs/schedule` en un proceso worker aparte                        |
-| Tests              | Vitest + Supertest; los e2e corren sobre PGlite (Postgres en memoria) |
-| Calidad            | oxlint + Prettier                                                     |
+| Pieza              | Tecnología                                                                |
+| ------------------ | ------------------------------------------------------------------------- |
+| Framework          | NestJS 12 (módulos ES)                                                    |
+| Base de datos      | PostgreSQL 17 (Docker en desarrollo)                                      |
+| ORM y migraciones  | Drizzle ORM + drizzle-kit                                                 |
+| Autenticación      | Better Auth: email y contraseña (con nombre de usuario), Google y Discord |
+| Validación         | class-validator en las peticiones · Zod en las variables de entorno       |
+| Documentación      | OpenAPI con `@nestjs/swagger`: `/docs` (navegable) y `/openapi.json`      |
+| Tareas programadas | `@nestjs/schedule` en un proceso worker aparte                            |
+| Tests              | Vitest + Supertest; los e2e corren sobre PGlite (Postgres en memoria)     |
+| Calidad            | oxlint + Prettier                                                         |
 
 ## Arquitectura
 
@@ -79,6 +79,15 @@ npm run cards:sync
 
 Sin este paso todo funciona, pero los mazos no muestran identidad de color ni portada. En producción lo hace el worker cada día (`npm run worker:prod`), y también nada más arrancar si el catálogo está vacío.
 
+### Acceso con Google y Discord (opcional)
+
+Cada proveedor se activa en cuanto tiene credenciales en `.env`; sin ellas, su botón simplemente no aparece en la web. En los dos casos, la **URL de redirección** que hay que registrar es la de la web, no la de la API: en desarrollo, `http://localhost:3000/api/auth/callback/google` y `http://localhost:3000/api/auth/callback/discord`.
+
+- **Google:** en [Google Cloud Console](https://console.cloud.google.com/apis/credentials), crea un proyecto, configura la pantalla de consentimiento y crea un «ID de cliente de OAuth» de tipo _Aplicación web_ con la URL de redirección anterior. Copia el id y el secreto a `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET`.
+- **Discord:** en el [portal de desarrolladores](https://discord.com/developers/applications), crea una aplicación y, en _OAuth2_, añade la URL de redirección. Copia el _Client ID_ y el _Client Secret_ a `DISCORD_CLIENT_ID` y `DISCORD_CLIENT_SECRET`.
+
+Reinicia la API después de cambiar `.env`. Por seguridad, entrar con Google no se une a una cuenta de email y contraseña que ya exista con el mismo email mientras ese email no esté verificado en DeckForge: así nadie puede registrar tu email con una contraseña suya y quedarse con acceso a tu cuenta.
+
 ## Scripts
 
 | Script                | Descripción                                                         |
@@ -103,6 +112,7 @@ Sin este paso todo funciona, pero los mazos no muestran identidad de color ni po
 | Método   | Ruta                      | Sesión    | Descripción                                      |
 | -------- | ------------------------- | --------- | ------------------------------------------------ |
 | `GET`    | `/health`                 | No        | Comprobación de vida                             |
+| `GET`    | `/v1/auth/providers`      | No        | Proveedores OAuth configurados                   |
 | `*`      | `/api/auth/*`             | —         | Better Auth: registro, acceso, sesión y cierre   |
 | `GET`    | `/v1/decks`               | Sí        | Tus mazos, los más recientes primero             |
 | `POST`   | `/v1/decks`               | Sí        | Crear un mazo (Commander y privado por defecto)  |

@@ -37,13 +37,18 @@ export async function createTestDatabase(): Promise<DatabaseConnection> {
   return { db: db as unknown as Database, close: () => client.close() };
 }
 
-/** Levanta la API completa contra una base de datos de `createTestDatabase`. */
-export async function createTestApp(): Promise<NestExpressApplication> {
+/**
+ * Levanta la API completa contra una base de datos de `createTestDatabase`.
+ * `envOverrides` cambia la configuración de ese test (p. ej. activar un proveedor OAuth).
+ */
+export async function createTestApp(
+  envOverrides: Partial<Env> = {},
+): Promise<NestExpressApplication> {
   const connection = await createTestDatabase();
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(ENV)
-    .useValue(TEST_ENV)
+    .useValue({ ...TEST_ENV, ...envOverrides })
     .overrideProvider(DATABASE_CONNECTION)
     .useValue(connection)
     .compile();

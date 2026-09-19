@@ -25,6 +25,12 @@ export class DeckSummaryDto {
   @ApiProperty({ enum: DECK_VISIBILITIES })
   visibility!: DeckVisibility;
 
+  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  folderId!: string | null;
+
+  @ApiProperty({ type: [String] })
+  tags!: string[];
+
   @ApiProperty({ description: 'Suma de las cantidades de todas las zonas' })
   cardCount!: number;
 

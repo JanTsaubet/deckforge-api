@@ -1,13 +1,15 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { DATABASE, type Database } from '../src/database/database.js';
-import { deckEntries } from '../src/database/schema/index.js';
 import { createTestApp, signUp, type TestUser } from './helpers/test-app.js';
 
 interface DeckResponse {
   id: string;
   name: string;
 }
+
+/** Ids de Scryfall de ejemplo: la API solo exige que tengan forma de UUID. */
+const SOL_RING = '00000000-0000-4000-8000-000000000001';
+const ISLAND = '00000000-0000-4000-8000-000000000002';
 
 describe('Mazos (e2e)', () => {
   let app: NestExpressApplication;
@@ -118,15 +120,15 @@ describe('Mazos (e2e)', () => {
   });
 
   it('duplica un mazo propio con todas sus cartas; la copia empieza privada', async () => {
-    const deck = await createDeck(owner, { name: 'Con cartas', visibility: 'public' });
-    // Aún no hay endpoint para añadir cartas (llega con la importación): se insertan directamente.
-    await app
-      .get<Database>(DATABASE)
-      .insert(deckEntries)
-      .values([
-        { deckId: deck.id, cardId: 'sol-ring', quantity: 1 },
-        { deckId: deck.id, cardId: 'island', quantity: 30 },
-      ]);
+    const deck = await createDeck(owner, {
+      name: 'Con cartas',
+      visibility: 'public',
+      tags: ['casual'],
+      entries: [
+        { cardId: SOL_RING, board: 'main', quantity: 1 },
+        { cardId: ISLAND, board: 'main', quantity: 30 },
+      ],
+    });
 
     const response = await api()
       .post(`/v1/decks/${deck.id}/duplicate`)
@@ -137,6 +139,7 @@ describe('Mazos (e2e)', () => {
       name: 'Copia de Con cartas',
       visibility: 'private',
       cardCount: 31,
+      tags: ['casual'],
       ownerUsername: owner.username,
     });
     expect(response.body.id).not.toBe(deck.id);
@@ -161,12 +164,78 @@ describe('Mazos (e2e)', () => {
     await api().post(`/v1/decks/${deck.id}/duplicate`).set('Cookie', stranger.cookie).expect(404);
   });
 
+  it('crea un mazo con sus cartas y suma las líneas repetidas (importación)', async () => {
+    const response = await api()
+      .post('/v1/decks')
+      .set('Cookie', owner.cookie)
+      .send({
+        name: 'Importado',
+        entries: [
+          { cardId: SOL_RING, board: 'commander', quantity: 1 },
+          { cardId: ISLAND, board: 'main', quantity: 20 },
+          { cardId: ISLAND, board: 'main', quantity: 10 },
+          { cardId: ISLAND, board: 'sideboard', quantity: 2 },
+        ],
+      })
+      .expect(201);
+
+    expect(response.body.cardCount).toBe(33);
+    expect(response.body.entries).toEqual(
+      expect.arrayContaining([
+        { cardId: SOL_RING, board: 'commander', quantity: 1, tags: [] },
+        { cardId: ISLAND, board: 'main', quantity: 30, tags: [] },
+        { cardId: ISLAND, board: 'sideboard', quantity: 2, tags: [] },
+      ]),
+    );
+  });
+
+  it('si una carta no es válida no se crea nada: ni el mazo ni el resto de cartas', async () => {
+    const before = await api().get('/v1/decks').set('Cookie', owner.cookie).expect(200);
+
+    await api()
+      .post('/v1/decks')
+      .set('Cookie', owner.cookie)
+      .send({
+        name: 'A medias',
+        entries: [
+          { cardId: SOL_RING, board: 'main', quantity: 1 },
+          { cardId: ISLAND, board: 'main', quantity: 0 },
+        ],
+      })
+      .expect(400);
+
+    const after = await api().get('/v1/decks').set('Cookie', owner.cookie).expect(200);
+    expect(after.body).toHaveLength((before.body as DeckResponse[]).length);
+  });
+
+  it('guarda las etiquetas en minúsculas, sin espacios de más y sin repetir', async () => {
+    const deck = await createDeck(owner, { name: 'Etiquetado' });
+
+    const response = await api()
+      .patch(`/v1/decks/${deck.id}`)
+      .set('Cookie', owner.cookie)
+      .send({ tags: [' cEDH ', 'cedh', 'Tokens  y   sacrificio'] })
+      .expect(200);
+
+    expect(response.body.tags).toEqual(['cedh', 'tokens y sacrificio']);
+  });
+
   it('rechaza datos inválidos con 400 en lugar de guardarlos o romper', async () => {
     const post = (body: object) => api().post('/v1/decks').set('Cookie', owner.cookie).send(body);
 
     await post({ name: '   ' }).expect(400);
     await post({ name: 'Válido', format: 'inventado' }).expect(400);
     await post({ name: 'Válido', campoDesconocido: true }).expect(400);
+    await post({ name: 'Válido', tags: Array.from({ length: 11 }, (_, i) => `t${i}`) }).expect(400);
+    await post({ name: 'Válido', tags: ['x'.repeat(31)] }).expect(400);
+    await post({
+      name: 'Válido',
+      entries: [{ cardId: 'sol-ring', board: 'main', quantity: 1 }],
+    }).expect(400);
+    await post({
+      name: 'Válido',
+      entries: [{ cardId: SOL_RING, board: 'mano', quantity: 1 }],
+    }).expect(400);
     await api().get('/v1/decks/no-es-un-uuid').expect(400);
   });
 });

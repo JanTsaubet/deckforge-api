@@ -4,7 +4,13 @@ import {
   DEFAULT_DECK_VISIBILITY,
   MAX_DECK_NAME_LENGTH,
 } from './deck.constants.js';
-import { DecksRepository, type DeckEntryRow, type DeckRow } from './decks.repository.js';
+import { FoldersService } from '../folders/folders.service.js';
+import {
+  DecksRepository,
+  type DeckEntryRow,
+  type DeckRow,
+  type NewDeckEntry,
+} from './decks.repository.js';
 import type { CreateDeckDto } from './dto/create-deck.dto.js';
 import type { DeckDto, DeckSummaryDto } from './dto/deck.dto.js';
 import type { UpdateDeckDto } from './dto/update-deck.dto.js';
@@ -17,7 +23,10 @@ import type { UpdateDeckDto } from './dto/update-deck.dto.js';
  */
 @Injectable()
 export class DecksService {
-  constructor(private readonly repository: DecksRepository) {}
+  constructor(
+    private readonly repository: DecksRepository,
+    private readonly folders: FoldersService,
+  ) {}
 
   async listMine(ownerId: string): Promise<DeckSummaryDto[]> {
     const rows = await this.repository.listByOwner(ownerId);
@@ -25,12 +34,20 @@ export class DecksService {
   }
 
   async create(ownerId: string, dto: CreateDeckDto): Promise<DeckDto> {
-    const id = await this.repository.create(ownerId, {
-      name: dto.name,
-      description: dto.description ?? null,
-      format: dto.format ?? DEFAULT_DECK_FORMAT,
-      visibility: dto.visibility ?? DEFAULT_DECK_VISIBILITY,
-    });
+    if (dto.folderId) await this.folders.assertCanUse(dto.folderId, ownerId);
+
+    const id = await this.repository.create(
+      ownerId,
+      {
+        name: dto.name,
+        description: dto.description ?? null,
+        format: dto.format ?? DEFAULT_DECK_FORMAT,
+        visibility: dto.visibility ?? DEFAULT_DECK_VISIBILITY,
+        folderId: dto.folderId ?? null,
+        tags: dto.tags ?? [],
+      },
+      mergeEntries(dto.entries ?? []),
+    );
     return this.getById(id, ownerId);
   }
 
@@ -45,11 +62,16 @@ export class DecksService {
 
   async update(id: string, ownerId: string, dto: UpdateDeckDto): Promise<DeckDto> {
     await this.assertOwner(id, ownerId);
+    // `null` saca el mazo de su carpeta; solo hay que comprobar cuando se mete en una.
+    if (dto.folderId) await this.folders.assertCanUse(dto.folderId, ownerId);
+
     await this.repository.update(id, {
       name: dto.name,
       description: dto.description,
       format: dto.format,
       visibility: dto.visibility,
+      folderId: dto.folderId,
+      tags: dto.tags,
     });
     return this.getById(id, ownerId);
   }
@@ -67,7 +89,11 @@ export class DecksService {
     const source = await this.repository.findById(id);
     if (!source || !canView(source, viewerId)) throw deckNotFound();
 
-    const copyId = await this.repository.duplicate(id, viewerId, copyName(source.name));
+    const copyId = await this.repository.duplicate(id, viewerId, {
+      name: copyName(source.name),
+      // Las carpetas son de cada biblioteca: la copia de un mazo ajeno empieza sin carpeta.
+      folderId: source.ownerId === viewerId ? source.folderId : null,
+    });
     return this.getById(copyId, viewerId);
   }
 
@@ -75,6 +101,21 @@ export class DecksService {
     const deckOwnerId = await this.repository.findOwnerId(id);
     if (deckOwnerId !== ownerId) throw deckNotFound();
   }
+}
+
+/**
+ * Junta las líneas repetidas (misma carta en la misma zona) sumando cantidades. Pasa, por
+ * ejemplo, al importar una lista con "2 Island" y "1 Island" en líneas separadas; sin esto
+ * la clave primaria de `deck_entries` rechazaría el mazo entero.
+ */
+export function mergeEntries(entries: NewDeckEntry[]): NewDeckEntry[] {
+  const merged = new Map<string, NewDeckEntry>();
+  for (const entry of entries) {
+    const key = `${entry.board}:${entry.cardId}`;
+    const existing = merged.get(key);
+    merged.set(key, { ...entry, quantity: (existing?.quantity ?? 0) + entry.quantity });
+  }
+  return [...merged.values()];
 }
 
 /** "Copia de …", recortado para no pasar del máximo que admite un nombre. */
@@ -103,6 +144,8 @@ function toSummaryDto(row: DeckRow): DeckSummaryFields {
     name: row.name,
     format: row.format,
     visibility: row.visibility,
+    folderId: row.folderId,
+    tags: row.tags,
     cardCount: row.cardCount,
     updatedAt: row.updatedAt.toISOString(),
   };

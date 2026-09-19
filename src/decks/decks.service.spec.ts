@@ -1,6 +1,7 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import type { FoldersService } from '../folders/folders.service.js';
 import type { DecksRepository, DeckRow } from './decks.repository.js';
-import { DecksService } from './decks.service.js';
+import { DecksService, mergeEntries } from './decks.service.js';
 
 function deckRow(overrides: Partial<DeckRow> = {}): DeckRow {
   return {
@@ -11,6 +12,8 @@ function deckRow(overrides: Partial<DeckRow> = {}): DeckRow {
     description: null,
     format: 'commander',
     visibility: 'private',
+    folderId: null,
+    tags: [],
     cardCount: 0,
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-02T00:00:00Z'),
@@ -29,6 +32,7 @@ describe('DecksService', () => {
     delete: ReturnType<typeof vi.fn>;
     duplicate: ReturnType<typeof vi.fn>;
   };
+  let folders: { assertCanUse: ReturnType<typeof vi.fn> };
   let service: DecksService;
 
   beforeEach(() => {
@@ -42,7 +46,11 @@ describe('DecksService', () => {
       delete: vi.fn(),
       duplicate: vi.fn(),
     };
-    service = new DecksService(repository as unknown as DecksRepository);
+    folders = { assertCanUse: vi.fn() };
+    service = new DecksService(
+      repository as unknown as DecksRepository,
+      folders as unknown as FoldersService,
+    );
   });
 
   it('al crear un mazo aplica Commander y privado por defecto', async () => {
@@ -51,12 +59,40 @@ describe('DecksService', () => {
 
     await service.create('duena', { name: 'Nuevo' });
 
-    expect(repository.create).toHaveBeenCalledWith('duena', {
-      name: 'Nuevo',
-      description: null,
-      format: 'commander',
-      visibility: 'private',
-    });
+    expect(repository.create).toHaveBeenCalledWith(
+      'duena',
+      {
+        name: 'Nuevo',
+        description: null,
+        format: 'commander',
+        visibility: 'private',
+        folderId: null,
+        tags: [],
+      },
+      [],
+    );
+  });
+
+  it('no deja crear un mazo dentro de una carpeta que no es tuya', async () => {
+    folders.assertCanUse.mockRejectedValue(new BadRequestException('La carpeta no existe'));
+
+    await expect(
+      service.create('duena', { name: 'Nuevo', folderId: 'carpeta-ajena' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  it('sacar un mazo de su carpeta (folderId null) no necesita comprobar ninguna carpeta', async () => {
+    repository.findOwnerId.mockResolvedValue('duena');
+    repository.findById.mockResolvedValue(deckRow());
+
+    await service.update('mazo-1', 'duena', { folderId: null });
+
+    expect(folders.assertCanUse).not.toHaveBeenCalled();
+    expect(repository.update).toHaveBeenCalledWith(
+      'mazo-1',
+      expect.objectContaining({ folderId: null }),
+    );
   });
 
   it('un mazo privado ajeno responde como si no existiera', async () => {
@@ -101,8 +137,39 @@ describe('DecksService', () => {
 
     const copy = await service.duplicate('mazo-1', 'otra-persona');
 
-    expect(repository.duplicate).toHaveBeenCalledWith('mazo-1', 'otra-persona', 'Copia de Atraxa');
+    expect(repository.duplicate).toHaveBeenCalledWith('mazo-1', 'otra-persona', {
+      name: 'Copia de Atraxa',
+      folderId: null,
+    });
     expect(copy.id).toBe('copia-1');
+  });
+
+  it('al duplicar un mazo propio, la copia se queda en la misma carpeta', async () => {
+    repository.findById.mockResolvedValue(deckRow({ folderId: 'carpeta-1' }));
+    repository.duplicate.mockResolvedValue('copia-1');
+
+    await service.duplicate('mazo-1', 'duena');
+
+    expect(repository.duplicate).toHaveBeenCalledWith(
+      'mazo-1',
+      'duena',
+      expect.objectContaining({ folderId: 'carpeta-1' }),
+    );
+  });
+
+  it('la copia de un mazo público ajeno no hereda la carpeta de su dueña', async () => {
+    repository.findById.mockResolvedValue(
+      deckRow({ visibility: 'public', folderId: 'carpeta-de-la-duena' }),
+    );
+    repository.duplicate.mockResolvedValue('copia-1');
+
+    await service.duplicate('mazo-1', 'otra-persona');
+
+    expect(repository.duplicate).toHaveBeenCalledWith(
+      'mazo-1',
+      'otra-persona',
+      expect.objectContaining({ folderId: null }),
+    );
   });
 
   it('no deja copiar un mazo privado ajeno', async () => {
@@ -120,7 +187,7 @@ describe('DecksService', () => {
 
     await service.duplicate('mazo-1', 'duena');
 
-    const [, , name] = repository.duplicate.mock.calls[0] as [string, string, string];
+    const [, , { name }] = repository.duplicate.mock.calls[0] as [string, string, { name: string }];
     expect(name).toHaveLength(100);
     expect(name.startsWith('Copia de ')).toBe(true);
   });
@@ -131,5 +198,22 @@ describe('DecksService', () => {
     const deck = await service.getById('mazo-1');
 
     expect(deck.updatedAt).toBe('2026-01-02T00:00:00.000Z');
+  });
+});
+
+describe('mergeEntries', () => {
+  it('suma las líneas repetidas de la misma carta en la misma zona', () => {
+    const island = '00000000-0000-0000-0000-000000000001';
+
+    expect(
+      mergeEntries([
+        { cardId: island, board: 'main', quantity: 2 },
+        { cardId: island, board: 'main', quantity: 1 },
+        { cardId: island, board: 'sideboard', quantity: 1 },
+      ]),
+    ).toEqual([
+      { cardId: island, board: 'main', quantity: 3 },
+      { cardId: island, board: 'sideboard', quantity: 1 },
+    ]);
   });
 });

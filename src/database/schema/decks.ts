@@ -8,6 +8,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import {
@@ -23,6 +24,26 @@ export const deckFormat = pgEnum('deck_format', DECK_FORMATS);
 export const deckVisibility = pgEnum('deck_visibility', DECK_VISIBILITIES);
 export const deckBoard = pgEnum('deck_board', DECK_BOARDS);
 
+/**
+ * Carpetas de la biblioteca. Son planas (sin subcarpetas) y el nombre no se repite dentro de
+ * la biblioteca de un mismo usuario, sin distinguir mayúsculas: "cEDH" y "cedh" serían dos
+ * carpetas indistinguibles en la lista.
+ */
+export const deckFolders = pgTable(
+  'deck_folders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('deck_folders_owner_name_unique').on(table.ownerId, sql`lower(${table.name})`),
+  ],
+);
+
 export const decks = pgTable(
   'decks',
   {
@@ -34,6 +55,13 @@ export const decks = pgTable(
     description: text('description'),
     format: deckFormat('format').notNull().default(DEFAULT_DECK_FORMAT),
     visibility: deckVisibility('visibility').notNull().default(DEFAULT_DECK_VISIBILITY),
+    /** Al borrar la carpeta, sus mazos no se borran: vuelven a "sin carpeta". */
+    folderId: uuid('folder_id').references(() => deckFolders.id, { onDelete: 'set null' }),
+    /** Etiquetas del mazo ("cEDH", "presupuesto"…), en minúsculas y sin repetir. */
+    tags: text('tags')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

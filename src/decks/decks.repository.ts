@@ -12,6 +12,8 @@ export interface DeckRow {
   description: string | null;
   format: DeckFormat;
   visibility: DeckVisibility;
+  folderId: string | null;
+  tags: string[];
   cardCount: number;
   createdAt: Date;
   updatedAt: Date;
@@ -29,9 +31,13 @@ export interface NewDeck {
   description: string | null;
   format: DeckFormat;
   visibility: DeckVisibility;
+  folderId: string | null;
+  tags: string[];
 }
 
 export type DeckChanges = Partial<NewDeck>;
+
+export type NewDeckEntry = Pick<DeckEntryRow, 'cardId' | 'board' | 'quantity'>;
 
 /** Columnas de un mazo con el nombre visible de su dueño y el total de cartas. */
 const deckColumns = {
@@ -42,6 +48,8 @@ const deckColumns = {
   description: decks.description,
   format: decks.format,
   visibility: decks.visibility,
+  folderId: decks.folderId,
+  tags: decks.tags,
   cardCount: sql<number>`coalesce(sum(${deckEntries.quantity}), 0)::int`,
   createdAt: decks.createdAt,
   updatedAt: decks.updatedAt,
@@ -96,12 +104,19 @@ export class DecksRepository {
       .orderBy(asc(deckEntries.board), asc(deckEntries.cardId));
   }
 
-  async create(ownerId: string, deck: NewDeck): Promise<string> {
-    const [row] = await this.db
-      .insert(decks)
-      .values({ ownerId, ...deck })
-      .returning({ id: decks.id });
-    return row.id;
+  /** Crea el mazo con sus cartas iniciales en una transacción: o todo o nada. */
+  async create(ownerId: string, deck: NewDeck, entries: NewDeckEntry[] = []): Promise<string> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(decks)
+        .values({ ownerId, ...deck })
+        .returning({ id: decks.id });
+
+      if (entries.length > 0) {
+        await tx.insert(deckEntries).values(entries.map((entry) => ({ ...entry, deckId: row.id })));
+      }
+      return row.id;
+    });
   }
 
   async update(id: string, changes: DeckChanges): Promise<void> {
@@ -120,20 +135,25 @@ export class DecksRepository {
    * Copia un mazo, con sus cartas, para `ownerId`. Va en una transacción: o se copia todo
    * o nada. La copia empieza siempre privada, aunque el original fuese público.
    */
-  async duplicate(sourceId: string, ownerId: string, name: string): Promise<string> {
+  async duplicate(
+    sourceId: string,
+    ownerId: string,
+    copy: Pick<NewDeck, 'name' | 'folderId'>,
+  ): Promise<string> {
     return this.db.transaction(async (tx) => {
       const [source] = await tx
-        .select({ description: decks.description, format: decks.format })
+        .select({ description: decks.description, format: decks.format, tags: decks.tags })
         .from(decks)
         .where(eq(decks.id, sourceId));
 
-      const [copy] = await tx
+      const [created] = await tx
         .insert(decks)
         .values({
           ownerId,
-          name,
+          ...copy,
           description: source.description,
           format: source.format,
+          tags: source.tags,
           visibility: 'private',
         })
         .returning({ id: decks.id });
@@ -142,10 +162,10 @@ export class DecksRepository {
       if (entries.length > 0) {
         await tx
           .insert(deckEntries)
-          .values(entries.map((entry) => ({ ...entry, deckId: copy.id })));
+          .values(entries.map((entry) => ({ ...entry, deckId: created.id })));
       }
 
-      return copy.id;
+      return created.id;
     });
   }
 }

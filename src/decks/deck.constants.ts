@@ -25,6 +25,21 @@ export type DeckBoard = (typeof DECK_BOARDS)[number];
 /** Longitud máxima del nombre de un mazo. */
 export const MAX_DECK_NAME_LENGTH = 100;
 
+/** Longitud máxima del nombre de una carpeta. */
+export const MAX_FOLDER_NAME_LENGTH = 50;
+
+/** Etiquetas por mazo, y longitud máxima de cada una. */
+export const MAX_DECK_TAGS = 10;
+export const MAX_TAG_LENGTH = 30;
+
+/**
+ * Límites de una lista de cartas. Holgados para cualquier formato real (un mazo de Commander
+ * tiene 100 cartas; Relentless Rats admite cualquier número de copias), pero ponen techo a
+ * una petición abusiva.
+ */
+export const MAX_DECK_ENTRIES = 500;
+export const MAX_ENTRY_QUANTITY = 999;
+
 /** DeckForge está pensado para Commander: es el formato por defecto. */
 export const DEFAULT_DECK_FORMAT: DeckFormat = 'commander';
 

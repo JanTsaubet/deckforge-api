@@ -1,0 +1,2 @@
+ALTER TABLE "deck_folders" DROP CONSTRAINT "deck_folders_owner_name_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "deck_folders_owner_name_unique" ON "deck_folders" USING btree ("owner_id",lower("name"));

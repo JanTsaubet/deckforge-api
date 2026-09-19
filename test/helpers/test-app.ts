@@ -7,7 +7,11 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/app.setup.js';
 import { ENV, type Env } from '../../src/config/env.js';
-import { DATABASE_CONNECTION } from '../../src/database/database.js';
+import {
+  DATABASE_CONNECTION,
+  type Database,
+  type DatabaseConnection,
+} from '../../src/database/database.js';
 import * as schema from '../../src/database/schema/index.js';
 
 /** Origen de la web: Better Auth solo acepta peticiones de orígenes de confianza. */
@@ -22,19 +26,26 @@ const TEST_ENV: Env = {
 };
 
 /**
- * Levanta la API completa contra un Postgres en memoria (PGlite) con las migraciones reales
- * aplicadas. Cada llamada crea una base de datos nueva: los ficheros de test no se pisan.
+ * Un Postgres en memoria (PGlite) con las migraciones reales aplicadas. Cada llamada crea
+ * una base de datos nueva: los ficheros de test no se pisan.
  */
-export async function createTestApp(): Promise<NestExpressApplication> {
+export async function createTestDatabase(): Promise<DatabaseConnection> {
   const client = new PGlite();
   const db = drizzle(client, { schema });
   await migrate(db, { migrationsFolder: 'drizzle' });
+  // PGlite y node-postgres exponen la misma API de Drizzle; solo cambia el driver.
+  return { db: db as unknown as Database, close: () => client.close() };
+}
+
+/** Levanta la API completa contra una base de datos de `createTestDatabase`. */
+export async function createTestApp(): Promise<NestExpressApplication> {
+  const connection = await createTestDatabase();
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(ENV)
     .useValue(TEST_ENV)
     .overrideProvider(DATABASE_CONNECTION)
-    .useValue({ db, close: () => client.close() })
+    .useValue(connection)
     .compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bodyParser: false });

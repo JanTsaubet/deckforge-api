@@ -1,5 +1,5 @@
 import { Global, Inject, Injectable, Module, type OnApplicationShutdown } from '@nestjs/common';
-import { ENV, type Env } from '../config/env.js';
+import { ENV, type DatabaseEnv } from '../config/env.js';
 import {
   connectPostgres,
   DATABASE,
@@ -23,7 +23,8 @@ class DatabaseShutdown implements OnApplicationShutdown {
     {
       provide: DATABASE_CONNECTION,
       inject: [ENV],
-      useFactory: (env: Env) => connectPostgres(env.DATABASE_URL),
+      // Solo usa DATABASE_URL: sirve igual para la API que para el worker.
+      useFactory: (env: DatabaseEnv) => connectPostgres(env.DATABASE_URL),
     },
     {
       provide: DATABASE,

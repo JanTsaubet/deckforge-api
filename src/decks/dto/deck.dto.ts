@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { MANA_COLORS } from '../../cards/colors.js';
 import {
   DECK_BOARDS,
   DECK_FORMATS,
@@ -7,6 +8,8 @@ import {
   type DeckFormat,
   type DeckVisibility,
 } from '../deck.constants.js';
+
+export type ManaColor = (typeof MANA_COLORS)[number];
 
 /** Resumen de un mazo para listados (biblioteca, búsqueda, perfiles). */
 export class DeckSummaryDto {
@@ -33,6 +36,20 @@ export class DeckSummaryDto {
 
   @ApiProperty({ description: 'Suma de las cantidades de todas las zonas' })
   cardCount!: number;
+
+  @ApiProperty({
+    enum: MANA_COLORS,
+    isArray: true,
+    description: 'Identidad de color en orden WUBRG: la del comandante, o la de todo el mazo',
+  })
+  colorIdentity!: ManaColor[];
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Ilustración de portada: la del comandante, o la carta de más coste',
+  })
+  coverImageUrl!: string | null;
 
   @ApiProperty({ format: 'date-time' })
   updatedAt!: string;

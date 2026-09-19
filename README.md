@@ -1,29 +1,32 @@
 # DeckForge · API
 
-API de DeckForge: cuentas de usuario, mazos y, más adelante, recomendaciones para _Magic: The Gathering_.
+API de DeckForge: cuentas de usuario, mazos, catálogo local de cartas y, más adelante, recomendaciones para _Magic: The Gathering_.
 
 El frontend vive en el repositorio **deckforge-web**, que contiene también la visión del producto y el roadmap por fases.
 
 ## Stack
 
-| Pieza             | Tecnología                                                                 |
-| ----------------- | -------------------------------------------------------------------------- |
-| Framework         | NestJS 12 (módulos ES)                                                     |
-| Base de datos     | PostgreSQL 17 (Docker en desarrollo)                                       |
-| ORM y migraciones | Drizzle ORM + drizzle-kit                                                  |
-| Autenticación     | Better Auth: email y contraseña, con el plugin de nombre de usuario        |
-| Validación        | class-validator en las peticiones · Zod en las variables de entorno        |
-| Documentación     | OpenAPI con `@nestjs/swagger`: `/docs` (navegable) y `/openapi.json`       |
-| Tests             | Vitest + Supertest; los e2e corren sobre PGlite (Postgres en memoria)      |
-| Calidad           | oxlint + Prettier                                                          |
+| Pieza              | Tecnología                                                            |
+| ------------------ | --------------------------------------------------------------------- |
+| Framework          | NestJS 12 (módulos ES)                                                |
+| Base de datos      | PostgreSQL 17 (Docker en desarrollo)                                  |
+| ORM y migraciones  | Drizzle ORM + drizzle-kit                                             |
+| Autenticación      | Better Auth: email y contraseña, con el plugin de nombre de usuario   |
+| Validación         | class-validator en las peticiones · Zod en las variables de entorno   |
+| Documentación      | OpenAPI con `@nestjs/swagger`: `/docs` (navegable) y `/openapi.json`  |
+| Tareas programadas | `@nestjs/schedule` en un proceso worker aparte                        |
+| Tests              | Vitest + Supertest; los e2e corren sobre PGlite (Postgres en memoria) |
+| Calidad            | oxlint + Prettier                                                     |
 
 ## Arquitectura
 
 - **El navegador nunca llama a esta API directamente.** La web reenvía `/api/auth/*` y `/api/v1/*` hacia aquí, así que la cookie de sesión pertenece al origen de la web y no hace falta CORS. Por eso `BETTER_AUTH_URL` es la URL de la web, no la de la API.
-- **Módulos:** `config` (entorno validado), `database` (Drizzle sobre `pg`), `auth` (Better Auth y guards), `decks` y `health`.
+- **Módulos:** `config` (entorno validado), `database` (Drizzle sobre `pg`), `auth` (Better Auth y guards), `decks`, `folders`, `cards` (catálogo) y `health`.
 - **Mazos en tres capas:** el controlador valida y documenta, el servicio aplica las reglas y el repositorio solo hace SQL.
 - **Un mazo privado no existe para nadie más que su dueño.** A cualquier otro se le responde 404, no 403, para no revelar siquiera que existe. Lo mismo al intentar editar o borrar uno ajeno.
 - **Protección CSRF explícita.** Better Auth desactiva por defecto la comprobación de origen cuando detecta un entorno de test. Aquí se fija a mano, así la protección no depende de adivinar el entorno y los tests prueban la misma seguridad que producción.
+- **Dos procesos: API y worker.** El worker (`src/worker.ts`) no tiene servidor HTTP: ejecuta las tareas programadas para que no le quiten CPU a las peticiones. Cada proceso valida solo las variables que usa; el worker no recibe los secretos de la API.
+- **Catálogo de cartas local.** El worker copia cada día los _bulk data_ `default_cards` de Scryfall (unas 116 000 impresiones) en la tabla `cards`. El fichero, JSONL comprimido de ~80 MB, se descomprime e interpreta en streaming, sin cargarlo entero en memoria. Si Scryfall no ha publicado uno nuevo, no se descarga. Con el catálogo, la API calcula la identidad de color y la portada de cada mazo. De momento es un único trabajo diario, así que no hay cola (Redis/BullMQ): llegará cuando haya más trabajos, como las recomendaciones.
 - **Tests e2e con la base de datos real.** Cada fichero levanta la API completa contra un PGlite con las migraciones de `drizzle/` aplicadas: se prueba el SQL de verdad, sin Docker y sin simulaciones.
 
 ## Puesta en marcha
@@ -68,32 +71,48 @@ npm run start:dev
 
 Queda en <http://localhost:4000>, con la documentación en <http://localhost:4000/docs>.
 
+6. Importa el catálogo de cartas (unos 30 segundos; descarga ~80 MB de Scryfall):
+
+```bash
+npm run cards:sync
+```
+
+Sin este paso todo funciona, pero los mazos no muestran identidad de color ni portada. En producción lo hace el worker cada día (`npm run worker:prod`), y también nada más arrancar si el catálogo está vacío.
+
 ## Scripts
 
-| Script                 | Descripción                                                          |
-| ---------------------- | -------------------------------------------------------------------- |
-| `npm run start:dev`    | API en modo desarrollo, recompila al guardar                         |
-| `npm run build`        | Compila a `dist/`                                                    |
-| `npm test`             | Tests unitarios                                                      |
-| `npm run test:e2e`     | Tests e2e: la API completa sobre Postgres en memoria                 |
-| `npm run lint`         | oxlint con información de tipos                                      |
-| `npm run typecheck`    | Comprueba TypeScript                                                 |
-| `npm run format`       | Formatea con Prettier                                                |
-| `npm run db:up`        | Levanta Postgres con Docker Compose                                  |
-| `npm run db:generate`  | Genera una migración a partir de los cambios del esquema             |
-| `npm run db:migrate`   | Aplica las migraciones pendientes                                    |
-| `npm run db:studio`    | Explorador visual de la base de datos (Drizzle Studio)               |
+| Script                | Descripción                                                         |
+| --------------------- | ------------------------------------------------------------------- |
+| `npm run start:dev`   | API en modo desarrollo, recompila al guardar                        |
+| `npm run build`       | Compila a `dist/` (API y worker)                                    |
+| `npm run worker:dev`  | Worker en modo desarrollo: sincroniza el catálogo cada día          |
+| `npm run cards:sync`  | Sincroniza el catálogo una vez y termina (`-- --force` para forzar) |
+| `npm run worker:prod` | Worker compilado, para producción                                   |
+| `npm test`            | Tests unitarios                                                     |
+| `npm run test:e2e`    | Tests e2e: la API completa sobre Postgres en memoria                |
+| `npm run lint`        | oxlint con información de tipos                                     |
+| `npm run typecheck`   | Comprueba TypeScript                                                |
+| `npm run format`      | Formatea con Prettier                                               |
+| `npm run db:up`       | Levanta Postgres con Docker Compose                                 |
+| `npm run db:generate` | Genera una migración a partir de los cambios del esquema            |
+| `npm run db:migrate`  | Aplica las migraciones pendientes                                   |
+| `npm run db:studio`   | Explorador visual de la base de datos (Drizzle Studio)              |
 
 ## Endpoints
 
-| Método   | Ruta             | Sesión          | Descripción                                            |
-| -------- | ---------------- | --------------- | ------------------------------------------------------ |
-| `GET`    | `/health`        | No              | Comprobación de vida                                   |
-| `*`      | `/api/auth/*`    | —               | Better Auth: registro, acceso, sesión y cierre         |
-| `GET`    | `/v1/decks`      | Sí              | Tus mazos, los más recientes primero                   |
-| `POST`   | `/v1/decks`      | Sí              | Crear un mazo (Commander y privado por defecto)        |
-| `GET`    | `/v1/decks/:id`  | Opcional        | Ver un mazo; los privados, solo su dueño               |
-| `PATCH`  | `/v1/decks/:id`  | Sí, dueño       | Cambiar solo los campos enviados                       |
-| `DELETE` | `/v1/decks/:id`  | Sí, dueño       | Borrar un mazo                                         |
+| Método   | Ruta                      | Sesión    | Descripción                                      |
+| -------- | ------------------------- | --------- | ------------------------------------------------ |
+| `GET`    | `/health`                 | No        | Comprobación de vida                             |
+| `*`      | `/api/auth/*`             | —         | Better Auth: registro, acceso, sesión y cierre   |
+| `GET`    | `/v1/decks`               | Sí        | Tus mazos, los más recientes primero             |
+| `POST`   | `/v1/decks`               | Sí        | Crear un mazo (Commander y privado por defecto)  |
+| `GET`    | `/v1/decks/:id`           | Opcional  | Ver un mazo; los privados, solo su dueño         |
+| `PATCH`  | `/v1/decks/:id`           | Sí, dueño | Cambiar solo los campos enviados                 |
+| `DELETE` | `/v1/decks/:id`           | Sí, dueño | Borrar un mazo                                   |
+| `POST`   | `/v1/decks/:id/duplicate` | Sí        | Copiar un mazo propio o uno público ajeno        |
+| `GET`    | `/v1/folders`             | Sí        | Tus carpetas, con cuántos mazos tiene cada una   |
+| `POST`   | `/v1/folders`             | Sí        | Crear una carpeta (nombre único sin mayúsculas)  |
+| `PATCH`  | `/v1/folders/:id`         | Sí, dueño | Renombrar una carpeta                            |
+| `DELETE` | `/v1/folders/:id`         | Sí, dueño | Borrar una carpeta; sus mazos quedan sin carpeta |
 
 La especificación completa, con los esquemas de cada petición y respuesta, está en `/openapi.json`. La web genera sus tipos a partir de ella con `npm run api:types`.

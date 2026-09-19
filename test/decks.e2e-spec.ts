@@ -1,5 +1,7 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
+import { DATABASE, type Database } from '../src/database/database.js';
+import { cards } from '../src/database/schema/index.js';
 import { createTestApp, signUp, type TestUser } from './helpers/test-app.js';
 
 interface DeckResponse {
@@ -218,6 +220,62 @@ describe('Mazos (e2e)', () => {
       .expect(200);
 
     expect(response.body.tags).toEqual(['cedh', 'tokens y sacrificio']);
+  });
+
+  it('resume identidad de color y portada con el catálogo de cartas', async () => {
+    const krenko = '00000000-0000-4000-8000-0000000000a1';
+    const card = (id: string, name: string, colorIdentity: string[], art: string) => ({
+      id,
+      name,
+      lang: 'en',
+      setCode: 'tst',
+      setName: 'Test',
+      collectorNumber: '1',
+      layout: 'normal',
+      manaValue: 4,
+      typeLine: 'Legendary Creature — Goblin',
+      colors: colorIdentity,
+      colorIdentity,
+      rarity: 'mythic',
+      imageArtCrop: art,
+      legalities: {},
+    });
+    await app
+      .get<Database>(DATABASE)
+      .insert(cards)
+      .values([
+        card(krenko, 'Krenko, Mob Boss', ['R'], 'krenko.jpg'),
+        card(SOL_RING, 'Sol Ring', [], 'sol-ring.jpg'),
+      ]);
+    const deck = await createDeck(owner, {
+      name: 'Goblins',
+      entries: [
+        { cardId: krenko, board: 'commander', quantity: 1 },
+        { cardId: SOL_RING, board: 'main', quantity: 1 },
+        // Una carta que el catálogo aún no conoce no rompe nada: simplemente no cuenta.
+        { cardId: ISLAND, board: 'main', quantity: 1 },
+      ],
+    });
+
+    const library = await api().get('/v1/decks').set('Cookie', owner.cookie).expect(200);
+    const summary = (library.body as Array<DeckResponse & Record<string, unknown>>).find(
+      (item) => item.id === deck.id,
+    );
+
+    expect(summary).toMatchObject({ colorIdentity: ['R'], coverImageUrl: 'krenko.jpg' });
+    const detail = await api().get(`/v1/decks/${deck.id}`).set('Cookie', owner.cookie).expect(200);
+    expect(detail.body).toMatchObject({ colorIdentity: ['R'], coverImageUrl: 'krenko.jpg' });
+  });
+
+  it('un mazo sin cartas conocidas no tiene identidad ni portada', async () => {
+    const deck = await createDeck(owner, { name: 'Vacío' });
+
+    const response = await api()
+      .get(`/v1/decks/${deck.id}`)
+      .set('Cookie', owner.cookie)
+      .expect(200);
+
+    expect(response.body).toMatchObject({ colorIdentity: [], coverImageUrl: null });
   });
 
   it('rechaza datos inválidos con 400 en lugar de guardarlos o romper', async () => {

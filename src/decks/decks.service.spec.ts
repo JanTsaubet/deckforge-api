@@ -31,6 +31,7 @@ describe('DecksService', () => {
     update: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
     duplicate: ReturnType<typeof vi.fn>;
+    findCardFacts: ReturnType<typeof vi.fn>;
   };
   let folders: { assertCanUse: ReturnType<typeof vi.fn> };
   let service: DecksService;
@@ -45,6 +46,7 @@ describe('DecksService', () => {
       update: vi.fn(),
       delete: vi.fn(),
       duplicate: vi.fn(),
+      findCardFacts: vi.fn().mockResolvedValue([]),
     };
     folders = { assertCanUse: vi.fn() };
     service = new DecksService(

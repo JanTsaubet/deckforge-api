@@ -1,6 +1,8 @@
 # Dependencias y compilación
 node_modules
 dist
+# El worker compila aparte para no borrarle `dist` a la API en modo --watch.
+dist-worker
 coverage
 *.tsbuildinfo
 

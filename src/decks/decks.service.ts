@@ -5,6 +5,7 @@ import {
   MAX_DECK_NAME_LENGTH,
 } from './deck.constants.js';
 import { FoldersService } from '../folders/folders.service.js';
+import { EMPTY_CARD_SUMMARY, summarizeByDeck, type DeckCardSummary } from './deck-card-summary.js';
 import {
   DecksRepository,
   type DeckEntryRow,
@@ -12,7 +13,7 @@ import {
   type NewDeckEntry,
 } from './decks.repository.js';
 import type { CreateDeckDto } from './dto/create-deck.dto.js';
-import type { DeckDto, DeckSummaryDto } from './dto/deck.dto.js';
+import type { DeckDto, DeckSummaryDto, ManaColor } from './dto/deck.dto.js';
 import type { UpdateDeckDto } from './dto/update-deck.dto.js';
 
 /**
@@ -30,7 +31,10 @@ export class DecksService {
 
   async listMine(ownerId: string): Promise<DeckSummaryDto[]> {
     const rows = await this.repository.listByOwner(ownerId);
-    return rows.map(toSummaryDto);
+    const summaries = summarizeByDeck(
+      await this.repository.findCardFacts(rows.map((row) => row.id)),
+    );
+    return rows.map((row) => toSummaryDto(row, summaries.get(row.id)));
   }
 
   async create(ownerId: string, dto: CreateDeckDto): Promise<DeckDto> {
@@ -56,8 +60,11 @@ export class DecksService {
     const deck = await this.repository.findById(id);
     if (!deck || !canView(deck, viewerId)) throw deckNotFound();
 
-    const entries = await this.repository.findEntries(id);
-    return toDeckDto(deck, entries);
+    const [entries, facts] = await Promise.all([
+      this.repository.findEntries(id),
+      this.repository.findCardFacts([id]),
+    ]);
+    return toDeckDto(deck, entries, summarizeByDeck(facts).get(id));
   }
 
   async update(id: string, ownerId: string, dto: UpdateDeckDto): Promise<DeckDto> {
@@ -137,7 +144,10 @@ function deckNotFound(): NotFoundException {
  */
 type DeckSummaryFields = Pick<DeckSummaryDto, keyof DeckSummaryDto>;
 
-function toSummaryDto(row: DeckRow): DeckSummaryFields {
+function toSummaryDto(
+  row: DeckRow,
+  cardSummary: DeckCardSummary = EMPTY_CARD_SUMMARY,
+): DeckSummaryFields {
   return {
     id: row.id,
     ownerUsername: row.ownerUsername,
@@ -147,13 +157,15 @@ function toSummaryDto(row: DeckRow): DeckSummaryFields {
     folderId: row.folderId,
     tags: row.tags,
     cardCount: row.cardCount,
+    colorIdentity: cardSummary.colorIdentity as ManaColor[],
+    coverImageUrl: cardSummary.coverImageUrl,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
-function toDeckDto(row: DeckRow, entries: DeckEntryRow[]): DeckDto {
+function toDeckDto(row: DeckRow, entries: DeckEntryRow[], cardSummary?: DeckCardSummary): DeckDto {
   return {
-    ...toSummaryDto(row),
+    ...toSummaryDto(row, cardSummary),
     description: row.description,
     createdAt: row.createdAt.toISOString(),
     entries,

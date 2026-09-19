@@ -1,7 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { DATABASE, type Database } from '../database/database.js';
-import { deckEntries, decks, user } from '../database/schema/index.js';
+import { cards, deckEntries, decks, user } from '../database/schema/index.js';
+import type { DeckCardFact } from './deck-card-summary.js';
 import type { DeckBoard, DeckFormat, DeckVisibility } from './deck.constants.js';
 
 export interface DeckRow {
@@ -102,6 +103,33 @@ export class DecksRepository {
       .from(deckEntries)
       .where(eq(deckEntries.deckId, deckId))
       .orderBy(asc(deckEntries.board), asc(deckEntries.cardId));
+  }
+
+  /**
+   * Datos de catálogo de las cartas de comandante y mazo principal de varios mazos, en una
+   * sola consulta (no una por mazo). Las cartas que el catálogo aún no conoce no aparecen.
+   */
+  async findCardFacts(deckIds: string[]): Promise<DeckCardFact[]> {
+    if (deckIds.length === 0) return [];
+    return this.db
+      .select({
+        deckId: deckEntries.deckId,
+        board: deckEntries.board,
+        quantity: deckEntries.quantity,
+        name: cards.name,
+        typeLine: cards.typeLine,
+        manaValue: cards.manaValue,
+        colorIdentity: cards.colorIdentity,
+        imageArtCrop: cards.imageArtCrop,
+      })
+      .from(deckEntries)
+      .innerJoin(cards, eq(cards.id, deckEntries.cardId))
+      .where(
+        and(
+          inArray(deckEntries.deckId, deckIds),
+          inArray(deckEntries.board, ['commander', 'main']),
+        ),
+      );
   }
 
   /** Crea el mazo con sus cartas iniciales en una transacción: o todo o nada. */

@@ -33,6 +33,10 @@ export const cards = pgTable(
     lang: text('lang').notNull(),
     setCode: text('set_code').notNull(),
     setName: text('set_name').notNull(),
+    /** Tipo de colección (`core`, `expansion`, `commander`…): para elegir la impresión por defecto. */
+    setType: text('set_type').notNull().default('expansion'),
+    /** Impresión promocional (prerelease, premio de torneo…). */
+    promo: boolean('promo').notNull().default(false),
     collectorNumber: text('collector_number').notNull(),
     releasedAt: date('released_at'),
     layout: text('layout').notNull(),

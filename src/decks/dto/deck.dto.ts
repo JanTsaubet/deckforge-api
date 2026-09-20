@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { MANA_COLORS } from '../../cards/colors.js';
+import { CardDto } from '../../cards/dto/card.dto.js';
 import {
   DECK_BOARDS,
   DECK_FORMATS,
@@ -67,6 +68,13 @@ export class DeckEntryDto {
 
   @ApiProperty({ type: [String] })
   tags!: string[];
+
+  @ApiProperty({
+    type: CardDto,
+    nullable: true,
+    description: 'Datos de la carta; null si el catálogo local aún no la conoce',
+  })
+  card!: CardDto | null;
 }
 
 /** Mazo completo, con sus cartas. */
@@ -79,4 +87,7 @@ export class DeckDto extends DeckSummaryDto {
 
   @ApiProperty({ type: [DeckEntryDto] })
   entries!: DeckEntryDto[];
+
+  @ApiProperty({ description: 'Si quien lo pide puede editarlo (es su dueño)' })
+  viewerCanEdit!: boolean;
 }

@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiCookieAuth,
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -26,6 +27,7 @@ import { DecksService } from './decks.service.js';
 import { CreateDeckDto } from './dto/create-deck.dto.js';
 import { DeckDto, DeckSummaryDto } from './dto/deck.dto.js';
 import { UpdateDeckDto } from './dto/update-deck.dto.js';
+import { UpdateEntriesDto } from './dto/update-entries.dto.js';
 
 @ApiTags('decks')
 @Controller('v1/decks')
@@ -89,6 +91,21 @@ export class DecksController {
     @Body() dto: UpdateDeckDto,
   ): Promise<DeckDto> {
     return this.decks.update(id, user.id, dto);
+  }
+
+  /** Añadir, quitar o mover cartas. Cada cambio fija la cantidad final de una carta en una zona. */
+  @Patch(':id/entries')
+  @UseGuards(AuthGuard)
+  @ApiCookieAuth()
+  @ApiOkResponse({ type: DeckDto, description: 'El mazo con los cambios aplicados' })
+  @ApiBadRequestResponse({ description: 'Carta que no existe o demasiadas cartas distintas' })
+  @ApiNotFoundResponse({ description: 'No existe o no es tuyo' })
+  updateEntries(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: SessionUser,
+    @Body() dto: UpdateEntriesDto,
+  ): Promise<DeckDto> {
+    return this.decks.updateEntries(id, user.id, dto);
   }
 
   @Delete(':id')

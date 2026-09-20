@@ -31,6 +31,8 @@ export function toCardRow(card: ScryfallCard, syncedAt: Date): CardRow | undefin
     lang: card.lang,
     setCode: card.set,
     setName: card.set_name,
+    setType: card.set_type ?? 'expansion',
+    promo: card.promo ?? false,
     collectorNumber: card.collector_number,
     releasedAt: card.released_at ?? null,
     layout: card.layout,

@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { CardsRepository } from '../cards/cards.repository.js';
+import type { CardDto } from '../cards/dto/card.dto.js';
 import {
   DEFAULT_DECK_FORMAT,
   DEFAULT_DECK_VISIBILITY,
@@ -10,11 +12,14 @@ import {
   DecksRepository,
   type DeckEntryRow,
   type DeckRow,
+  type EntryChange,
   type NewDeckEntry,
+  TooManyEntriesError,
 } from './decks.repository.js';
 import type { CreateDeckDto } from './dto/create-deck.dto.js';
 import type { DeckDto, DeckSummaryDto, ManaColor } from './dto/deck.dto.js';
 import type { UpdateDeckDto } from './dto/update-deck.dto.js';
+import type { UpdateEntriesDto } from './dto/update-entries.dto.js';
 
 /**
  * Reglas de negocio de los mazos.
@@ -27,6 +32,7 @@ export class DecksService {
   constructor(
     private readonly repository: DecksRepository,
     private readonly folders: FoldersService,
+    private readonly cards: CardsRepository,
   ) {}
 
   async listMine(ownerId: string): Promise<DeckSummaryDto[]> {
@@ -64,7 +70,37 @@ export class DecksService {
       this.repository.findEntries(id),
       this.repository.findCardFacts([id]),
     ]);
-    return toDeckDto(deck, entries, summarizeByDeck(facts).get(id));
+    const cards = await this.cards.findByIds([...new Set(entries.map((entry) => entry.cardId))]);
+
+    return toDeckDto(deck, entries, {
+      cardSummary: summarizeByDeck(facts).get(id),
+      cardsById: new Map(cards.map((card) => [card.id, card])),
+      viewerCanEdit: deck.ownerId === viewerId,
+    });
+  }
+
+  /**
+   * Cambia las cartas del mazo (lo usa el guardado automático del editor). Solo se pueden
+   * añadir cartas que existan en el catálogo; quitar (cantidad 0) vale para cualquiera.
+   */
+  async updateEntries(id: string, ownerId: string, dto: UpdateEntriesDto): Promise<DeckDto> {
+    await this.assertOwner(id, ownerId);
+    const changes = lastChangePerEntry(dto.changes);
+
+    const added = changes.filter((change) => change.quantity > 0).map((change) => change.cardId);
+    const known = await this.cards.findExistingIds([...new Set(added)]);
+    const unknown = added.filter((cardId) => !known.has(cardId));
+    if (unknown.length > 0) {
+      throw new BadRequestException(`Cartas que no existen en el catálogo: ${unknown.join(', ')}`);
+    }
+
+    try {
+      await this.repository.applyEntryChanges(id, changes);
+    } catch (error) {
+      if (error instanceof TooManyEntriesError) throw new BadRequestException(error.message);
+      throw error;
+    }
+    return this.getById(id, ownerId);
   }
 
   async update(id: string, ownerId: string, dto: UpdateDeckDto): Promise<DeckDto> {
@@ -108,6 +144,16 @@ export class DecksService {
     const deckOwnerId = await this.repository.findOwnerId(id);
     if (deckOwnerId !== ownerId) throw deckNotFound();
   }
+}
+
+/**
+ * Si la misma carta y zona aparece varias veces en una petición, vale el último cambio: es
+ * el estado más reciente que tenía el editor.
+ */
+export function lastChangePerEntry(changes: EntryChange[]): EntryChange[] {
+  const byEntry = new Map<string, EntryChange>();
+  for (const change of changes) byEntry.set(`${change.board}:${change.cardId}`, change);
+  return [...byEntry.values()];
 }
 
 /**
@@ -163,11 +209,22 @@ function toSummaryDto(
   };
 }
 
-function toDeckDto(row: DeckRow, entries: DeckEntryRow[], cardSummary?: DeckCardSummary): DeckDto {
+interface DeckDetailExtras {
+  cardSummary?: DeckCardSummary;
+  cardsById: Map<string, CardDto>;
+  viewerCanEdit: boolean;
+}
+
+function toDeckDto(
+  row: DeckRow,
+  entries: DeckEntryRow[],
+  { cardSummary, cardsById, viewerCanEdit }: DeckDetailExtras,
+): DeckDto {
   return {
     ...toSummaryDto(row, cardSummary),
     description: row.description,
     createdAt: row.createdAt.toISOString(),
-    entries,
+    entries: entries.map((entry) => ({ ...entry, card: cardsById.get(entry.cardId) ?? null })),
+    viewerCanEdit,
   };
 }

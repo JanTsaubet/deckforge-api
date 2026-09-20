@@ -1,9 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { DATABASE, type Database } from '../database/database.js';
 import { cards, deckEntries, decks, user } from '../database/schema/index.js';
 import type { DeckCardFact } from './deck-card-summary.js';
-import type { DeckBoard, DeckFormat, DeckVisibility } from './deck.constants.js';
+import {
+  MAX_DECK_ENTRIES,
+  type DeckBoard,
+  type DeckFormat,
+  type DeckVisibility,
+} from './deck.constants.js';
 
 export interface DeckRow {
   id: string;
@@ -39,6 +44,16 @@ export interface NewDeck {
 export type DeckChanges = Partial<NewDeck>;
 
 export type NewDeckEntry = Pick<DeckEntryRow, 'cardId' | 'board' | 'quantity'>;
+
+/** Cambio de cartas: fija la cantidad de una carta en una zona; 0 la quita. */
+export type EntryChange = NewDeckEntry;
+
+/** El mazo pasaría del máximo de cartas distintas: los cambios no se aplican. */
+export class TooManyEntriesError extends Error {
+  constructor() {
+    super(`Un mazo admite como mucho ${MAX_DECK_ENTRIES} cartas distintas`);
+  }
+}
 
 /** Columnas de un mazo con el nombre visible de su dueño y el total de cartas. */
 const deckColumns = {
@@ -157,6 +172,42 @@ export class DecksRepository {
 
   async delete(id: string): Promise<void> {
     await this.db.delete(decks).where(eq(decks.id, id));
+  }
+
+  /**
+   * Aplica cambios de cartas en una transacción: o todos o ninguno. Fijar una cantidad (y no
+   * sumar o restar) hace que repetir el mismo cambio no tenga efectos, así que un reintento
+   * tras un fallo de red no duplica cartas.
+   */
+  async applyEntryChanges(deckId: string, changes: EntryChange[]): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      for (const { cardId, board, quantity } of changes) {
+        const entry = and(
+          eq(deckEntries.deckId, deckId),
+          eq(deckEntries.cardId, cardId),
+          eq(deckEntries.board, board),
+        );
+        if (quantity === 0) {
+          await tx.delete(deckEntries).where(entry);
+        } else {
+          await tx
+            .insert(deckEntries)
+            .values({ deckId, cardId, board, quantity })
+            .onConflictDoUpdate({
+              target: [deckEntries.deckId, deckEntries.cardId, deckEntries.board],
+              set: { quantity },
+            });
+        }
+      }
+
+      const [{ total }] = await tx
+        .select({ total: count() })
+        .from(deckEntries)
+        .where(eq(deckEntries.deckId, deckId));
+      if (total > MAX_DECK_ENTRIES) throw new TooManyEntriesError();
+
+      await tx.update(decks).set({ updatedAt: new Date() }).where(eq(decks.id, deckId));
+    });
   }
 
   /**

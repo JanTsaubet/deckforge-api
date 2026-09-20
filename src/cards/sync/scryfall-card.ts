@@ -27,6 +27,9 @@ export interface ScryfallCard {
   layout: string;
   set: string;
   set_name: string;
+  /** `core`, `expansion`, `commander`, `masters`, `promo`… */
+  set_type?: string;
+  promo?: boolean;
   collector_number: string;
   released_at?: string;
   mana_cost?: string;

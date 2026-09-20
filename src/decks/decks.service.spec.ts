@@ -1,7 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import type { CardsRepository } from '../cards/cards.repository.js';
 import type { FoldersService } from '../folders/folders.service.js';
 import type { DecksRepository, DeckRow } from './decks.repository.js';
-import { DecksService, mergeEntries } from './decks.service.js';
+import { DecksService, lastChangePerEntry, mergeEntries } from './decks.service.js';
 
 function deckRow(overrides: Partial<DeckRow> = {}): DeckRow {
   return {
@@ -23,6 +24,7 @@ function deckRow(overrides: Partial<DeckRow> = {}): DeckRow {
 
 describe('DecksService', () => {
   let repository: {
+    applyEntryChanges: ReturnType<typeof vi.fn>;
     listByOwner: ReturnType<typeof vi.fn>;
     findById: ReturnType<typeof vi.fn>;
     findOwnerId: ReturnType<typeof vi.fn>;
@@ -34,10 +36,12 @@ describe('DecksService', () => {
     findCardFacts: ReturnType<typeof vi.fn>;
   };
   let folders: { assertCanUse: ReturnType<typeof vi.fn> };
+  let cards: { findByIds: ReturnType<typeof vi.fn>; findExistingIds: ReturnType<typeof vi.fn> };
   let service: DecksService;
 
   beforeEach(() => {
     repository = {
+      applyEntryChanges: vi.fn(),
       listByOwner: vi.fn(),
       findById: vi.fn(),
       findOwnerId: vi.fn(),
@@ -49,9 +53,11 @@ describe('DecksService', () => {
       findCardFacts: vi.fn().mockResolvedValue([]),
     };
     folders = { assertCanUse: vi.fn() };
+    cards = { findByIds: vi.fn().mockResolvedValue([]), findExistingIds: vi.fn() };
     service = new DecksService(
       repository as unknown as DecksRepository,
       folders as unknown as FoldersService,
+      cards as unknown as CardsRepository,
     );
   });
 
@@ -194,6 +200,57 @@ describe('DecksService', () => {
     expect(name.startsWith('Copia de ')).toBe(true);
   });
 
+  it('solo su dueño puede editar el mazo (viewerCanEdit)', async () => {
+    repository.findById.mockResolvedValue(deckRow({ visibility: 'public', ownerId: 'duena' }));
+
+    await expect(service.getById('mazo-1', 'duena')).resolves.toMatchObject({
+      viewerCanEdit: true,
+    });
+    await expect(service.getById('mazo-1', 'otra')).resolves.toMatchObject({
+      viewerCanEdit: false,
+    });
+    await expect(service.getById('mazo-1')).resolves.toMatchObject({ viewerCanEdit: false });
+  });
+
+  it('no deja añadir cartas que no están en el catálogo, y no escribe nada', async () => {
+    repository.findOwnerId.mockResolvedValue('duena');
+    cards.findExistingIds.mockResolvedValue(new Set(['conocida']));
+
+    await expect(
+      service.updateEntries('mazo-1', 'duena', {
+        changes: [
+          { cardId: 'conocida', board: 'main', quantity: 1 },
+          { cardId: 'inventada', board: 'main', quantity: 1 },
+        ],
+      }),
+    ).rejects.toThrow(/inventada/);
+    expect(repository.applyEntryChanges).not.toHaveBeenCalled();
+  });
+
+  it('quitar una carta no exige que siga en el catálogo', async () => {
+    repository.findOwnerId.mockResolvedValue('duena');
+    repository.findById.mockResolvedValue(deckRow());
+    cards.findExistingIds.mockResolvedValue(new Set());
+
+    await service.updateEntries('mazo-1', 'duena', {
+      changes: [{ cardId: 'retirada', board: 'main', quantity: 0 }],
+    });
+
+    expect(repository.applyEntryChanges).toHaveBeenCalledWith('mazo-1', [
+      { cardId: 'retirada', board: 'main', quantity: 0 },
+    ]);
+  });
+
+  it('no deja editar las cartas de un mazo ajeno', async () => {
+    repository.findOwnerId.mockResolvedValue('duena');
+
+    await expect(
+      service.updateEntries('mazo-1', 'otra', {
+        changes: [{ cardId: 'x', board: 'main', quantity: 1 }],
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('devuelve las fechas en ISO 8601', async () => {
     repository.findById.mockResolvedValue(deckRow({ visibility: 'public' }));
 
@@ -216,6 +273,21 @@ describe('mergeEntries', () => {
     ).toEqual([
       { cardId: island, board: 'main', quantity: 3 },
       { cardId: island, board: 'sideboard', quantity: 1 },
+    ]);
+  });
+});
+
+describe('lastChangePerEntry', () => {
+  it('si una carta y zona se repite, gana el último cambio', () => {
+    expect(
+      lastChangePerEntry([
+        { cardId: 'a', board: 'main', quantity: 3 },
+        { cardId: 'a', board: 'sideboard', quantity: 1 },
+        { cardId: 'a', board: 'main', quantity: 0 },
+      ]),
+    ).toEqual([
+      { cardId: 'a', board: 'main', quantity: 0 },
+      { cardId: 'a', board: 'sideboard', quantity: 1 },
     ]);
   });
 });

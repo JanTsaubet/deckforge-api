@@ -184,9 +184,10 @@ describe('Mazos (e2e)', () => {
     expect(response.body.cardCount).toBe(33);
     expect(response.body.entries).toEqual(
       expect.arrayContaining([
-        { cardId: SOL_RING, board: 'commander', quantity: 1, tags: [] },
-        { cardId: ISLAND, board: 'main', quantity: 30, tags: [] },
-        { cardId: ISLAND, board: 'sideboard', quantity: 2, tags: [] },
+        // `card: null`: son ids de prueba que el catálogo no conoce.
+        { cardId: SOL_RING, board: 'commander', quantity: 1, tags: [], card: null },
+        { cardId: ISLAND, board: 'main', quantity: 30, tags: [], card: null },
+        { cardId: ISLAND, board: 'sideboard', quantity: 2, tags: [], card: null },
       ]),
     );
   });

@@ -181,6 +181,62 @@ describe('Editor de mazos (e2e)', () => {
       expect(response.body.cardCount).toBe(1);
     });
 
+    it('guarda las etiquetas de cada carta, normalizadas', async () => {
+      const deckId = await createDeck(owner);
+
+      const response = await patchEntries(owner, deckId, [
+        {
+          cardId: uuid(SOL_RING),
+          board: 'main',
+          quantity: 1,
+          tags: [' Rampa ', 'rampa', 'Arte  Fijo'],
+        },
+      ]).expect(200);
+
+      expect(response.body.entries[0].tags).toEqual(['rampa', 'arte fijo']);
+    });
+
+    it('un cambio sin etiquetas conserva las que ya tenía la carta', async () => {
+      const deckId = await createDeck(owner);
+      await patchEntries(owner, deckId, [
+        { cardId: uuid(4), board: 'main', quantity: 1, tags: ['tutor'] },
+      ]).expect(200);
+
+      // El guardado automático manda solo la cantidad cuando es lo único que cambia.
+      const response = await patchEntries(owner, deckId, [
+        { cardId: uuid(4), board: 'main', quantity: 3 },
+      ]).expect(200);
+
+      expect(response.body.entries[0]).toMatchObject({ quantity: 3, tags: ['tutor'] });
+    });
+
+    it('una lista de etiquetas vacía las quita todas', async () => {
+      const deckId = await createDeck(owner);
+      await patchEntries(owner, deckId, [
+        { cardId: uuid(4), board: 'main', quantity: 1, tags: ['tutor', 'goblin'] },
+      ]).expect(200);
+
+      const response = await patchEntries(owner, deckId, [
+        { cardId: uuid(4), board: 'main', quantity: 1, tags: [] },
+      ]).expect(200);
+
+      expect(response.body.entries[0].tags).toEqual([]);
+    });
+
+    it('rechaza etiquetas vacías, demasiado largas o demasiadas', async () => {
+      const deckId = await createDeck(owner);
+      const withTags = (tags: unknown) => [{ cardId: uuid(4), board: 'main', quantity: 1, tags }];
+
+      await patchEntries(owner, deckId, withTags(['  '])).expect(400);
+      await patchEntries(owner, deckId, withTags(['x'.repeat(31)])).expect(400);
+      await patchEntries(
+        owner,
+        deckId,
+        withTags(Array.from({ length: 11 }, (_, index) => `etiqueta ${index}`)),
+      ).expect(400);
+      await patchEntries(owner, deckId, withTags('rampa')).expect(400);
+    });
+
     it('repetir el mismo cambio no duplica cartas (reintentos del guardado automático)', async () => {
       const deckId = await createDeck(owner);
       const change = [{ cardId: uuid(SOL_RING), board: 'main', quantity: 1 }];

@@ -1,17 +1,27 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsIn,
   IsInt,
+  IsOptional,
+  IsString,
   IsUUID,
+  Length,
   Max,
   Min,
   ValidateNested,
 } from 'class-validator';
-import { DECK_BOARDS, MAX_ENTRY_QUANTITY, type DeckBoard } from '../deck.constants.js';
+import {
+  DECK_BOARDS,
+  MAX_ENTRY_QUANTITY,
+  MAX_ENTRY_TAGS,
+  MAX_TAG_LENGTH,
+  type DeckBoard,
+} from '../deck.constants.js';
+import { normalizeTags } from './normalize-tags.js';
 
 /** Máximo de cambios por petición: de sobra para el guardado automático del editor. */
 export const MAX_ENTRY_CHANGES = 200;
@@ -34,6 +44,21 @@ export class EntryChangeDto {
   @Min(0)
   @Max(MAX_ENTRY_QUANTITY)
   quantity!: number;
+
+  @ApiPropertyOptional({
+    type: [String],
+    maxItems: MAX_ENTRY_TAGS,
+    description:
+      'Etiquetas de la carta en este mazo ("rampa", "robo"…): sustituyen a las que tuviera. ' +
+      'Sin este campo se conservan. Se guardan en minúsculas y sin repetir.',
+  })
+  @Transform(normalizeTags)
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_ENTRY_TAGS)
+  @IsString({ each: true })
+  @Length(1, MAX_TAG_LENGTH, { each: true })
+  tags?: string[];
 }
 
 /**

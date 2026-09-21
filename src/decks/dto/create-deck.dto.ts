@@ -29,18 +29,9 @@ import {
   type DeckFormat,
   type DeckVisibility,
 } from '../deck.constants.js';
+import { normalizeTags } from './normalize-tags.js';
 
 const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
-
-/**
- * Etiquetas sin espacios sobrantes, en minúsculas y sin repetir: "cEDH" y " cedh " son la
- * misma. Lo que no sea un array de textos se deja tal cual para que la validación lo rechace.
- */
-const normalizeTags = ({ value }: { value: unknown }) => {
-  if (!Array.isArray(value) || !value.every((tag) => typeof tag === 'string')) return value;
-  const tags = (value as string[]).map((tag) => tag.trim().replace(/\s+/g, ' ').toLowerCase());
-  return [...new Set(tags)];
-};
 
 /** Una línea de la lista de cartas al crear un mazo (por ejemplo, al importarlo). */
 export class DeckEntryInputDto {

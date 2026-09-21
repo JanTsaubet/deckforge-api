@@ -32,6 +32,9 @@ export const MAX_FOLDER_NAME_LENGTH = 50;
 export const MAX_DECK_TAGS = 10;
 export const MAX_TAG_LENGTH = 30;
 
+/** Etiquetas de cada carta dentro de un mazo ("rampa", "robo"…): de sobra para agrupar. */
+export const MAX_ENTRY_TAGS = 10;
+
 /**
  * Límites de una lista de cartas. Holgados para cualquier formato real (un mazo de Commander
  * tiene 100 cartas; Relentless Rats admite cualquier número de copias), pero ponen techo a

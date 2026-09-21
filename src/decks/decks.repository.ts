@@ -45,8 +45,11 @@ export type DeckChanges = Partial<NewDeck>;
 
 export type NewDeckEntry = Pick<DeckEntryRow, 'cardId' | 'board' | 'quantity'>;
 
-/** Cambio de cartas: fija la cantidad de una carta en una zona; 0 la quita. */
-export type EntryChange = NewDeckEntry;
+/**
+ * Cambio de cartas: fija la cantidad de una carta en una zona (0 la quita) y, si trae
+ * etiquetas, también sus etiquetas. Sin `tags` se conservan las que tuviera.
+ */
+export type EntryChange = NewDeckEntry & { tags?: string[] };
 
 /** El mazo pasaría del máximo de cartas distintas: los cambios no se aplican. */
 export class TooManyEntriesError extends Error {
@@ -181,7 +184,7 @@ export class DecksRepository {
    */
   async applyEntryChanges(deckId: string, changes: EntryChange[]): Promise<void> {
     await this.db.transaction(async (tx) => {
-      for (const { cardId, board, quantity } of changes) {
+      for (const { cardId, board, quantity, tags } of changes) {
         const entry = and(
           eq(deckEntries.deckId, deckId),
           eq(deckEntries.cardId, cardId),
@@ -192,10 +195,11 @@ export class DecksRepository {
         } else {
           await tx
             .insert(deckEntries)
-            .values({ deckId, cardId, board, quantity })
+            .values({ deckId, cardId, board, quantity, tags: tags ?? [] })
             .onConflictDoUpdate({
               target: [deckEntries.deckId, deckEntries.cardId, deckEntries.board],
-              set: { quantity },
+              // Sin etiquetas en el cambio, las que ya tuviera la carta no se tocan.
+              set: tags === undefined ? { quantity } : { quantity, tags },
             });
         }
       }

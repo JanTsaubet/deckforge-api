@@ -17,6 +17,15 @@ const SKIPPED_LAYOUTS = new Set(['art_series']);
  *  - Cartas de dos caras: el coste y la imagen vienen por cara; los colores, también.
  *  - Cartas reversibles: ni coste, ni tipo, ni valor de maná, ni `oracle_id` en la raíz.
  */
+/** El texto de todas las caras, separado como lo imprime Scryfall; `null` si no hay ninguno. */
+function joinFaces(texts: Array<string | undefined>): string | null {
+  const written = texts.filter((text): text is string => Boolean(text));
+  return written.length > 0 ? written.join(FACE_SEPARATOR) : null;
+}
+
+/** Como Scryfall separa las caras en el texto impreso. */
+const FACE_SEPARATOR = '\n//\n';
+
 export function toCardRow(card: ScryfallCard, syncedAt: Date): CardRow | undefined {
   if (SKIPPED_LAYOUTS.has(card.layout)) return undefined;
 
@@ -40,7 +49,10 @@ export function toCardRow(card: ScryfallCard, syncedAt: Date): CardRow | undefin
     manaCost: card.mana_cost || front?.mana_cost || null,
     manaValue: card.cmc ?? front?.cmc ?? 0,
     typeLine: card.type_line ?? faces.map((face) => face.type_line ?? '').join(' // '),
-    oracleText: card.oracle_text ?? null,
+    // Las cartas de dos caras no traen texto en la raíz: se unen las dos, como el tipo.
+    // Sin esto, un comandante de doble cara o una tierra modal se quedarían sin texto de
+    // reglas, que es de donde salen el maná que producen o si puede ser tu comandante.
+    oracleText: card.oracle_text ?? joinFaces(faces.map((face) => face.oracle_text)),
     colors: sortColors(card.colors ?? faces.flatMap((face) => face.colors ?? [])),
     colorIdentity: sortColors(card.color_identity),
     rarity: card.rarity,

@@ -80,6 +80,24 @@ describe('toCardRow', () => {
     });
   });
 
+  it('en una carta de dos caras une el texto de las dos', () => {
+    const row = toCardRow(
+      scryfallCard({
+        name: "Agadeem's Awakening // Agadeem, the Undercrypt",
+        layout: 'modal_dfc',
+        // Scryfall no pone texto en la raíz de las cartas de dos caras.
+        oracle_text: undefined,
+        card_faces: [
+          { name: "Agadeem's Awakening", oracle_text: 'Return from your graveyard...' },
+          { name: 'Agadeem, the Undercrypt', oracle_text: '{T}: Add {B}.' },
+        ],
+      }),
+      SYNCED_AT,
+    );
+
+    expect(row?.oracleText).toBe('Return from your graveyard...\n//\n{T}: Add {B}.');
+  });
+
   it('completa las cartas reversibles, que no traen casi nada en la raíz', () => {
     const row = toCardRow(
       scryfallCard({

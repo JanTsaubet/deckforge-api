@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -25,6 +26,11 @@ import { AuthGuard, OptionalAuthGuard } from '../auth/auth.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { DecksService } from './decks.service.js';
 import { CreateDeckDto } from './dto/create-deck.dto.js';
+import {
+  DeckVersionDto,
+  DEFAULT_VERSIONS_LIMIT,
+  VersionsQueryDto,
+} from './dto/deck-version.dto.js';
 import { DeckDto, DeckSummaryDto } from './dto/deck.dto.js';
 import { UpdateDeckDto } from './dto/update-deck.dto.js';
 import { UpdateEntriesDto } from './dto/update-entries.dto.js';
@@ -78,6 +84,20 @@ export class DecksController {
     @CurrentUser() user: SessionUser | undefined,
   ): Promise<DeckDto> {
     return this.decks.getById(id, user?.id);
+  }
+
+  /** Historial del mazo: qué cartas cambiaron y cuándo. Solo para su dueño. */
+  @Get(':id/versions')
+  @UseGuards(AuthGuard)
+  @ApiCookieAuth()
+  @ApiOkResponse({ type: [DeckVersionDto], description: 'Versiones, la más reciente primero' })
+  @ApiNotFoundResponse({ description: 'No existe o no es tuyo' })
+  listVersions(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: SessionUser,
+    @Query() query: VersionsQueryDto,
+  ): Promise<DeckVersionDto[]> {
+    return this.decks.listVersions(id, user.id, query.limit ?? DEFAULT_VERSIONS_LIMIT);
   }
 
   @Patch(':id')

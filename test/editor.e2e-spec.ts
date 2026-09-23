@@ -1,7 +1,8 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { eq } from 'drizzle-orm';
 import request from 'supertest';
 import { DATABASE, type Database } from '../src/database/database.js';
-import { cards } from '../src/database/schema/index.js';
+import { cards, deckVersions } from '../src/database/schema/index.js';
 import { createTestApp, signUp, type TestUser } from './helpers/test-app.js';
 
 type CardInsert = typeof cards.$inferInsert;
@@ -33,6 +34,18 @@ function card(n: number, overrides: Partial<CardInsert> = {}): CardInsert {
 const KRENKO = 1;
 const SOL_RING = 2;
 const GOBLIN_TOKEN = 3;
+
+interface VersionResponse {
+  id: string;
+  createdAt: string;
+  changes: Array<{
+    cardId: string;
+    board: string;
+    from: number;
+    to: number;
+    card: { name: string } | null;
+  }>;
+}
 
 interface EntryResponse {
   cardId: string;
@@ -305,6 +318,160 @@ describe('Editor de mazos (e2e)', () => {
         .set('Cookie', owner.cookie)
         .expect(200);
       expect(response.body.entries).toHaveLength(500);
+    });
+  });
+
+  describe('historial de versiones', () => {
+    const versions = async (user: TestUser, deckId: string, query = '') => {
+      const response = await api()
+        .get(`/v1/decks/${deckId}/versions${query}`)
+        .set('Cookie', user.cookie)
+        .expect(200);
+      return response.body as VersionResponse[];
+    };
+
+    /** Envejece las versiones de un mazo para probar lo que pasa al volver un rato después. */
+    const ageVersions = (deckId: string, minutes: number) =>
+      app
+        .get<Database>(DATABASE)
+        .update(deckVersions)
+        .set({ createdAt: new Date(Date.now() - minutes * 60_000) })
+        .where(eq(deckVersions.deckId, deckId));
+
+    it('anota qué cartas cambiaron, de cuántas copias a cuántas', async () => {
+      const deckId = await createDeck(owner, {
+        name: 'Con historial',
+        entries: [{ cardId: uuid(4), board: 'main', quantity: 3 }],
+      });
+
+      await patchEntries(owner, deckId, [
+        { cardId: uuid(SOL_RING), board: 'main', quantity: 1 },
+        { cardId: uuid(4), board: 'main', quantity: 0 },
+      ]).expect(200);
+
+      const [version] = await versions(owner, deckId);
+      expect(version.changes).toEqual([
+        { cardId: uuid(4), board: 'main', from: 3, to: 0, card: expect.objectContaining({}) },
+        {
+          cardId: uuid(SOL_RING),
+          board: 'main',
+          from: 0,
+          to: 1,
+          card: expect.objectContaining({}),
+        },
+      ]);
+      expect(version.changes[1].card?.name).toBe('Sol Ring');
+    });
+
+    it('agrupa los cambios seguidos en una sola versión', async () => {
+      // Lo que hace el guardado automático al añadir tres cartas: tres peticiones seguidas.
+      const deckId = await createDeck(owner);
+      await patchEntries(owner, deckId, [
+        { cardId: uuid(SOL_RING), board: 'main', quantity: 1 },
+      ]).expect(200);
+      await patchEntries(owner, deckId, [{ cardId: uuid(4), board: 'main', quantity: 1 }]).expect(
+        200,
+      );
+      await patchEntries(owner, deckId, [{ cardId: uuid(4), board: 'main', quantity: 4 }]).expect(
+        200,
+      );
+
+      const history = await versions(owner, deckId);
+      expect(history).toHaveLength(1);
+      expect(history[0].changes.map(({ cardId, from, to }) => [cardId, from, to])).toEqual([
+        // Goblin Matron antes que Sol Ring: los cambios se leen por nombre, no por el orden
+        // en que se tocaron las cartas.
+        [uuid(4), 0, 4],
+        [uuid(SOL_RING), 0, 1],
+      ]);
+    });
+
+    it('al volver un rato después, los cambios empiezan otra versión', async () => {
+      const deckId = await createDeck(owner);
+      await patchEntries(owner, deckId, [
+        { cardId: uuid(SOL_RING), board: 'main', quantity: 1 },
+      ]).expect(200);
+      await ageVersions(deckId, 30);
+
+      await patchEntries(owner, deckId, [{ cardId: uuid(4), board: 'main', quantity: 1 }]).expect(
+        200,
+      );
+
+      const history = await versions(owner, deckId);
+      expect(history).toHaveLength(2);
+      // La más reciente primero.
+      expect(history[0].changes[0].cardId).toBe(uuid(4));
+    });
+
+    it('una carta que se añade y se vuelve a quitar no deja rastro', async () => {
+      const deckId = await createDeck(owner);
+
+      await patchEntries(owner, deckId, [{ cardId: uuid(4), board: 'main', quantity: 1 }]).expect(
+        200,
+      );
+      await patchEntries(owner, deckId, [{ cardId: uuid(4), board: 'main', quantity: 0 }]).expect(
+        200,
+      );
+
+      await expect(versions(owner, deckId)).resolves.toEqual([]);
+    });
+
+    it('etiquetar una carta no es un cambio del mazo', async () => {
+      const deckId = await createDeck(owner, {
+        name: 'Etiquetas',
+        entries: [{ cardId: uuid(SOL_RING), board: 'main', quantity: 1 }],
+      });
+
+      await patchEntries(owner, deckId, [
+        { cardId: uuid(SOL_RING), board: 'main', quantity: 1, tags: ['rampa'] },
+      ]).expect(200);
+
+      await expect(versions(owner, deckId)).resolves.toEqual([]);
+    });
+
+    it('mover una carta de zona son dos cambios, el que la quita y el que la pone', async () => {
+      const deckId = await createDeck(owner, {
+        name: 'Mover',
+        entries: [{ cardId: uuid(KRENKO), board: 'main', quantity: 1 }],
+      });
+
+      await patchEntries(owner, deckId, [
+        { cardId: uuid(KRENKO), board: 'main', quantity: 0 },
+        { cardId: uuid(KRENKO), board: 'commander', quantity: 1 },
+      ]).expect(200);
+
+      const [version] = await versions(owner, deckId);
+      expect(version.changes.map(({ board, from, to }) => [board, from, to])).toEqual([
+        ['commander', 0, 1],
+        ['main', 1, 0],
+      ]);
+    });
+
+    it('deja pedir menos versiones, y rechaza un límite absurdo', async () => {
+      const deckId = await createDeck(owner);
+      await patchEntries(owner, deckId, [{ cardId: uuid(4), board: 'main', quantity: 1 }]).expect(
+        200,
+      );
+      await ageVersions(deckId, 30);
+      await patchEntries(owner, deckId, [{ cardId: uuid(5), board: 'main', quantity: 1 }]).expect(
+        200,
+      );
+
+      await expect(versions(owner, deckId, '?limit=1')).resolves.toHaveLength(1);
+      await api()
+        .get(`/v1/decks/${deckId}/versions?limit=0`)
+        .set('Cookie', owner.cookie)
+        .expect(400);
+    });
+
+    it('el historial de un mazo ajeno no existe, aunque el mazo sea público', async () => {
+      const deckId = await createDeck(owner, { name: 'Público', visibility: 'public' });
+      await patchEntries(owner, deckId, [{ cardId: uuid(4), board: 'main', quantity: 1 }]).expect(
+        200,
+      );
+
+      await api().get(`/v1/decks/${deckId}/versions`).set('Cookie', stranger.cookie).expect(404);
+      await api().get(`/v1/decks/${deckId}/versions`).expect(401);
     });
   });
 

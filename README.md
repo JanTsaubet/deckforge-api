@@ -119,10 +119,14 @@ Reinicia la API después de cambiar `.env`. Por seguridad, entrar con Google no 
 | `GET`    | `/v1/decks/:id`           | Opcional  | Ver un mazo; los privados, solo su dueño         |
 | `PATCH`  | `/v1/decks/:id`           | Sí, dueño | Cambiar solo los campos enviados                 |
 | `DELETE` | `/v1/decks/:id`           | Sí, dueño | Borrar un mazo                                   |
+| `PATCH`  | `/v1/decks/:id/entries`   | Sí, dueño | Añadir, quitar o mover cartas (todo o nada)      |
+| `GET`    | `/v1/decks/:id/versions`  | Sí, dueño | Historial: qué cartas cambiaron y cuándo         |
 | `POST`   | `/v1/decks/:id/duplicate` | Sí        | Copiar un mazo propio o uno público ajeno        |
 | `GET`    | `/v1/folders`             | Sí        | Tus carpetas, con cuántos mazos tiene cada una   |
 | `POST`   | `/v1/folders`             | Sí        | Crear una carpeta (nombre único sin mayúsculas)  |
 | `PATCH`  | `/v1/folders/:id`         | Sí, dueño | Renombrar una carpeta                            |
 | `DELETE` | `/v1/folders/:id`         | Sí, dueño | Borrar una carpeta; sus mazos quedan sin carpeta |
+| `GET`    | `/v1/cards/search`        | No        | Buscar cartas del catálogo por nombre            |
+| `GET`    | `/v1/cards/staples`       | No        | Las más jugadas por función para una identidad   |
 
 La especificación completa, con los esquemas de cada petición y respuesta, está en `/openapi.json`. La web genera sus tipos a partir de ella con `npm run api:types`.

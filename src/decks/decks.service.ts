@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { CardsRepository } from '../cards/cards.repository.js';
 import type { CardDto } from '../cards/dto/card.dto.js';
 import {
+  DECK_BOARDS,
   DEFAULT_DECK_FORMAT,
   DEFAULT_DECK_VISIBILITY,
   MAX_DECK_NAME_LENGTH,
@@ -17,6 +18,7 @@ import {
   TooManyEntriesError,
 } from './decks.repository.js';
 import type { CreateDeckDto } from './dto/create-deck.dto.js';
+import type { DeckVersionChangeDto, DeckVersionDto } from './dto/deck-version.dto.js';
 import type { DeckDto, DeckSummaryDto, ManaColor } from './dto/deck.dto.js';
 import type { UpdateDeckDto } from './dto/update-deck.dto.js';
 import type { UpdateEntriesDto } from './dto/update-entries.dto.js';
@@ -103,6 +105,32 @@ export class DecksService {
     return this.getById(id, ownerId);
   }
 
+  /**
+   * Historial del mazo, solo para su dueño: qué cambió y cuándo. Es información de cómo se
+   * ha construido, y eso no se comparte con quien solo tiene el enlace del mazo.
+   */
+  async listVersions(id: string, ownerId: string, limit: number): Promise<DeckVersionDto[]> {
+    await this.assertOwner(id, ownerId);
+    const versions = await this.repository.listVersions(id, limit);
+
+    // Los datos de las cartas de todas las versiones, en una sola consulta.
+    const cardIds = new Set(
+      versions.flatMap((version) => version.changes.map((change) => change.cardId)),
+    );
+    const cards = await this.cards.findByIds([...cardIds]);
+    const cardsById = new Map(cards.map((card) => [card.id, card]));
+
+    return versions.map((version) => ({
+      id: version.id,
+      createdAt: version.createdAt.toISOString(),
+      // Por zonas y por nombre, como se lee el mazo; el orden en que se tocaron las cartas
+      // dentro de una misma tanda de cambios no dice nada a quien lee el historial.
+      changes: version.changes
+        .map((change) => ({ ...change, card: cardsById.get(change.cardId) ?? null }))
+        .sort(byBoardAndName),
+    }));
+  }
+
   async update(id: string, ownerId: string, dto: UpdateDeckDto): Promise<DeckDto> {
     await this.assertOwner(id, ownerId);
     // `null` saca el mazo de su carpeta; solo hay que comprobar cuando se mete en una.
@@ -169,6 +197,17 @@ export function mergeEntries(entries: NewDeckEntry[]): NewDeckEntry[] {
     merged.set(key, { ...entry, quantity: (existing?.quantity ?? 0) + entry.quantity });
   }
   return [...merged.values()];
+}
+
+/** Orden de lectura de los cambios de una versión: las zonas del mazo y, dentro, por nombre. */
+function byBoardAndName(a: DeckVersionChangeDto, b: DeckVersionChangeDto): number {
+  const boards = DECK_BOARDS.indexOf(a.board) - DECK_BOARDS.indexOf(b.board);
+  return boards !== 0 ? boards : cardLabel(a).localeCompare(cardLabel(b), 'es');
+}
+
+/** El nombre de la carta o, si el catálogo ya no la conoce, su id (para no dejar de ordenar). */
+function cardLabel(change: DeckVersionChangeDto): string {
+  return change.card?.name ?? change.cardId;
 }
 
 /** "Copia de …", recortado para no pasar del máximo que admite un nombre. */

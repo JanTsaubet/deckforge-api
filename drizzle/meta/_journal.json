@@ -36,6 +36,13 @@
       "when": 1789851364014,
       "tag": "0004_card_printing_info",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790194052238,
+      "tag": "0005_deck_versions",
+      "breakpoints": true
     }
   ]
 }

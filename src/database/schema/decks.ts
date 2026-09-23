@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -18,6 +19,7 @@ import {
   DEFAULT_DECK_FORMAT,
   DEFAULT_DECK_VISIBILITY,
 } from '../../decks/deck.constants.js';
+import type { DeckVersionChange } from '../../decks/deck-versions.js';
 import { user } from './auth.js';
 
 export const deckFormat = pgEnum('deck_format', DECK_FORMATS);
@@ -92,4 +94,27 @@ export const deckEntries = pgTable(
     primaryKey({ columns: [table.deckId, table.cardId, table.board] }),
     check('deck_entries_quantity_positive', sql`${table.quantity} > 0`),
   ],
+);
+
+/**
+ * Historial del mazo. Cada versión guarda **lo que cambió** —qué cartas y de cuántas copias a
+ * cuántas—, no una copia del mazo entero: el historial de un mazo muy retocado pesa lo que
+ * pesan sus cambios, y es justo lo que se quiere enseñar.
+ *
+ * Los cambios seguidos se agrupan en la misma versión (ver `VERSION_WINDOW_MINUTES`), porque
+ * el guardado automático manda cambios cada pocos segundos.
+ */
+export const deckVersions = pgTable(
+  'deck_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    deckId: uuid('deck_id')
+      .notNull()
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    changes: jsonb('changes').$type<DeckVersionChange[]>().notNull(),
+    /** Cuándo empezaron los cambios de esta versión. */
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // El historial siempre se lee igual: las versiones de un mazo, la más reciente primero.
+  (table) => [index('deck_versions_deck_created_idx').on(table.deckId, table.createdAt)],
 );

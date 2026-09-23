@@ -1,8 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { DATABASE, type Database } from '../database/database.js';
-import { cards, deckEntries, decks, user } from '../database/schema/index.js';
+import { cards, deckEntries, decks, deckVersions, user } from '../database/schema/index.js';
 import type { DeckCardFact } from './deck-card-summary.js';
+import {
+  mergeVersionChanges,
+  versionChanges,
+  VERSION_WINDOW_MINUTES,
+  type DeckVersionChange,
+} from './deck-versions.js';
 import {
   MAX_DECK_ENTRIES,
   type DeckBoard,
@@ -50,6 +56,16 @@ export type NewDeckEntry = Pick<DeckEntryRow, 'cardId' | 'board' | 'quantity'>;
  * etiquetas, también sus etiquetas. Sin `tags` se conservan las que tuviera.
  */
 export type EntryChange = NewDeckEntry & { tags?: string[] };
+
+/** Una versión del historial tal como está guardada. */
+export interface DeckVersionRow {
+  id: string;
+  changes: DeckVersionChange[];
+  createdAt: Date;
+}
+
+/** Lo que hay dentro de una transacción de Drizzle: la base de datos, con la misma forma. */
+type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
 /** El mazo pasaría del máximo de cartas distintas: los cambios no se aplican. */
 export class TooManyEntriesError extends Error {
@@ -184,6 +200,16 @@ export class DecksRepository {
    */
   async applyEntryChanges(deckId: string, changes: EntryChange[]): Promise<void> {
     await this.db.transaction(async (tx) => {
+      // Cómo estaba el mazo antes, para anotar en el historial de dónde viene cada carta.
+      const before = await tx
+        .select({
+          cardId: deckEntries.cardId,
+          board: deckEntries.board,
+          quantity: deckEntries.quantity,
+        })
+        .from(deckEntries)
+        .where(eq(deckEntries.deckId, deckId));
+
       for (const { cardId, board, quantity, tags } of changes) {
         const entry = and(
           eq(deckEntries.deckId, deckId),
@@ -210,8 +236,23 @@ export class DecksRepository {
         .where(eq(deckEntries.deckId, deckId));
       if (total > MAX_DECK_ENTRIES) throw new TooManyEntriesError();
 
+      await recordVersion(tx, deckId, versionChanges(before, changes));
       await tx.update(decks).set({ updatedAt: new Date() }).where(eq(decks.id, deckId));
     });
+  }
+
+  /** Historial del mazo, la versión más reciente primero. */
+  listVersions(deckId: string, limit: number): Promise<DeckVersionRow[]> {
+    return this.db
+      .select({
+        id: deckVersions.id,
+        changes: deckVersions.changes,
+        createdAt: deckVersions.createdAt,
+      })
+      .from(deckVersions)
+      .where(eq(deckVersions.deckId, deckId))
+      .orderBy(desc(deckVersions.createdAt))
+      .limit(limit);
   }
 
   /**
@@ -250,5 +291,41 @@ export class DecksRepository {
 
       return created.id;
     });
+  }
+}
+
+/**
+ * Anota los cambios en el historial. Si la última versión es reciente, los cambios se suman a
+ * ella en vez de crear otra: así una tanda de retoques seguidos es una sola entrada, y no una
+ * por cada vez que el guardado automático manda cambios.
+ *
+ * Si al sumarlos la versión se queda sin nada (se añadió una carta y se volvió a quitar), se
+ * borra: el mazo está como estaba y en el historial no debería quedar rastro.
+ */
+async function recordVersion(
+  tx: Transaction,
+  deckId: string,
+  changes: DeckVersionChange[],
+): Promise<void> {
+  if (changes.length === 0) return;
+
+  const openedAfter = new Date(Date.now() - VERSION_WINDOW_MINUTES * 60_000);
+  const [latest] = await tx
+    .select({ id: deckVersions.id, changes: deckVersions.changes })
+    .from(deckVersions)
+    .where(and(eq(deckVersions.deckId, deckId), gte(deckVersions.createdAt, openedAfter)))
+    .orderBy(desc(deckVersions.createdAt))
+    .limit(1);
+
+  if (!latest) {
+    await tx.insert(deckVersions).values({ deckId, changes });
+    return;
+  }
+
+  const merged = mergeVersionChanges(latest.changes, changes);
+  if (merged.length === 0) {
+    await tx.delete(deckVersions).where(eq(deckVersions.id, latest.id));
+  } else {
+    await tx.update(deckVersions).set({ changes: merged }).where(eq(deckVersions.id, latest.id));
   }
 }

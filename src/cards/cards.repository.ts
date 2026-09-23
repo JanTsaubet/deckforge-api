@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import { DATABASE, type Database } from '../database/database.js';
 import { cards } from '../database/schema/index.js';
 import type { CardDto } from './dto/card.dto.js';
@@ -17,6 +17,22 @@ const NON_DECK_LAYOUTS = [
   'scheme',
   'vanguard',
 ];
+
+/**
+ * Cuál de las impresiones de una carta se enseña: en papel, no promocional, de una colección
+ * normal si la hay, con imagen y la más reciente. Así "Lightning Bolt" no sale con el arte de
+ * una reimpresión rara. Va siempre detrás de la clave de la carta en el `distinct on`.
+ */
+const PRINTING_PREFERENCE = [
+  asc(cards.digital),
+  asc(cards.promo),
+  sql`${cards.setType} not in ('core', 'expansion')`,
+  sql`${cards.imageNormal} is null`,
+  sql`${cards.releasedAt} desc nulls last`,
+];
+
+/** Una fila por carta: las reversibles no tienen `oracle_id` y contarían todas como una. */
+const CARD_KEY = sql`coalesce(${cards.oracleId}, ${cards.id})`;
 
 const cardColumns = {
   id: cards.id,
@@ -53,6 +69,30 @@ export interface CardSearchOptions {
    * Solo cartas cuya identidad de color quepa en esta (p. ej. `['R', 'G']` para un comandante
    * Gruul). `undefined` no filtra; `[]` deja solo las incoloras.
    */
+  identity?: string[];
+}
+
+/**
+ * Las funciones que casi todo mazo de Commander necesita, y cómo se reconocen en el texto de
+ * una carta. No son categorías exactas —una carta puede hacer varias cosas— pero bastan para
+ * proponer lo que más se juega de cada una.
+ */
+export const STAPLE_ROLES = ['ramp', 'draw', 'removal', 'land'] as const;
+export type StapleRole = (typeof STAPLE_ROLES)[number];
+
+/** Nombres de las tierras básicas, para descartar las que buscan colores de otro mazo. */
+const BASIC_BY_COLOR: Record<string, string> = {
+  W: 'Plains',
+  U: 'Island',
+  B: 'Swamp',
+  R: 'Mountain',
+  G: 'Forest',
+};
+
+export interface StaplesOptions {
+  role: StapleRole;
+  limit: number;
+  /** Identidad del comandante; `undefined` no filtra, `[]` deja solo lo incoloro. */
   identity?: string[];
 }
 
@@ -102,9 +142,7 @@ export class CardsRepository {
       filters.push(sql`${cards.colorIdentity} <@ ${sql.param(identity)}::text[]`);
     }
 
-    // Una fila por carta, eligiendo su mejor impresión. Las cartas reversibles no tienen
-    // `oracle_id`: sin el `coalesce`, todas ellas (NULL) contarían como una sola carta.
-    const cardKey = sql`coalesce(${cards.oracleId}, ${cards.id})`;
+    const cardKey = CARD_KEY;
     const printings = this.db
       .selectDistinctOn([cardKey], {
         ...cardColumns,
@@ -116,14 +154,7 @@ export class CardsRepository {
       })
       .from(cards)
       .where(and(...filters))
-      .orderBy(
-        cardKey,
-        asc(cards.digital),
-        asc(cards.promo),
-        sql`${cards.setType} not in ('core', 'expansion')`,
-        sql`${cards.imageNormal} is null`,
-        sql`${cards.releasedAt} desc nulls last`,
-      )
+      .orderBy(cardKey, ...PRINTING_PREFERENCE)
       .as('printings');
 
     // …y luego se ordenan las cartas por relevancia.
@@ -139,6 +170,88 @@ export class CardsRepository {
 
     return rows.map(toCardDto);
   }
+
+  /**
+   * Cartas "casi obligatorias" de una función para una identidad de color: las más jugadas
+   * en Commander (ranking de EDHREC) que encajan en ese mazo. Es lo que propone el bloque de
+   * recomendaciones del editor.
+   *
+   * La función se reconoce por el texto de la carta, que es lo que hay en el catálogo: no es
+   * una clasificación perfecta, pero en las primeras posiciones —que es lo que se enseña—
+   * acierta, porque ahí están las cartas que todo el mundo juega por ese motivo.
+   */
+  async findStaples({ role, limit, identity }: StaplesOptions): Promise<CardDto[]> {
+    const filters = [
+      eq(cards.lang, 'en'),
+      notInArray(cards.layout, NON_DECK_LAYOUTS),
+      sql`${cards.legalities}->>'commander' = 'legal'`,
+      // Sin ranking no se puede saber si se juega mucho: se queda fuera.
+      sql`${cards.edhrecRank} is not null`,
+      ...roleFilters(role, identity),
+    ];
+    if (identity) {
+      filters.push(sql`${cards.colorIdentity} <@ ${sql.param(identity)}::text[]`);
+    }
+
+    const printings = this.db
+      .selectDistinctOn([CARD_KEY], { ...cardColumns, edhrecRank: cards.edhrecRank })
+      .from(cards)
+      .where(and(...filters))
+      .orderBy(CARD_KEY, ...PRINTING_PREFERENCE)
+      .as('printings');
+
+    const rows = await this.db
+      .select()
+      .from(printings)
+      .orderBy(sql`${printings.edhrecRank} asc`, asc(printings.name))
+      .limit(limit);
+
+    return rows.map(toCardDto);
+  }
+}
+
+/** Lo que distingue a cada función en el texto y el tipo de una carta. */
+function roleFilters(role: StapleRole, identity?: string[]): SQL[] {
+  const notALand = sql`${cards.typeLine} !~* 'land'`;
+
+  switch (role) {
+    case 'ramp':
+      // Produce maná (y es barata, o no sería rampa) o va a buscar tierras.
+      return [
+        notALand,
+        sql`((${cards.oracleText} ~* '\\yadd\\y' and ${cards.manaValue} <= 4)
+             or ${cards.oracleText} ~* 'search your library for .{0,40}land')`,
+      ];
+    case 'draw':
+      return [
+        notALand,
+        sql`${cards.oracleText} ~* 'draws? (a|two|three|four|that many|\\d+) cards?'`,
+      ];
+    case 'removal':
+      // "Destruye/exilia objetivo", pero no las que se exilian cosas propias (parpadeos).
+      return [
+        notALand,
+        sql`${cards.oracleText} ~* '(destroy|exile) target'`,
+        sql`${cards.oracleText} !~* '(destroy|exile) target [^.]{0,40}you control'`,
+      ];
+    case 'land':
+      return [
+        sql`${cards.typeLine} ~* 'land'`,
+        sql`${cards.typeLine} !~* 'basic'`,
+        // Las tierras que buscan básicas de otros colores (los "fetch" de otra identidad)
+        // no pintan nada en este mazo, aunque técnicamente quepan por ser incoloras.
+        ...offColorBasics(identity),
+      ];
+  }
+}
+
+function offColorBasics(identity?: string[]): SQL[] {
+  if (!identity) return [];
+  const offColor = Object.entries(BASIC_BY_COLOR)
+    .filter(([color]) => !identity.includes(color))
+    .map(([, basic]) => basic);
+  if (offColor.length === 0) return [];
+  return [sql`${cards.oracleText} !~* ${`\\y(${offColor.join('|')})\\y`}`];
 }
 
 /** En LIKE, `%` y `_` son comodines: si el usuario los escribe, se buscan literalmente. */

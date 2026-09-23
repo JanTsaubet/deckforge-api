@@ -2,8 +2,9 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { ApiOkResponse, ApiPropertyOptional, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
-import { CardsRepository } from './cards.repository.js';
+import { CardsRepository, STAPLE_ROLES } from './cards.repository.js';
 import { CardDto } from './dto/card.dto.js';
+import { StapleGroupDto, StaplesQueryDto } from './dto/staples.dto.js';
 
 export class CardSearchQueryDto {
   @ApiProperty({ minLength: 2, maxLength: 100, example: 'krenko' })
@@ -48,6 +49,27 @@ export class CardsController {
       limit: query.limit ?? 10,
       identity: query.identity === undefined ? undefined : parseIdentity(query.identity),
     });
+  }
+
+  /**
+   * Quick adds: lo que casi todo mazo de esa identidad juega, por funciones. Es una consulta
+   * por función; el editor las enseña juntas y descarta las cartas que el mazo ya tiene.
+   */
+  @Get('staples')
+  @ApiOkResponse({
+    type: [StapleGroupDto],
+    description: 'Un grupo por función, en el orden en que se monta un mazo',
+  })
+  async staples(@Query() query: StaplesQueryDto): Promise<StapleGroupDto[]> {
+    const identity = query.identity === undefined ? undefined : parseIdentity(query.identity);
+    const limit = query.limit ?? 12;
+
+    return Promise.all(
+      STAPLE_ROLES.map(async (role) => ({
+        role,
+        cards: await this.cards.findStaples({ role, limit, identity }),
+      })),
+    );
   }
 }
 
